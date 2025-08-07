@@ -135,6 +135,53 @@ class DatabaseService:
             logger.error(f"Error saving resume data: {str(e)}")
             raise Exception(f"Failed to save resume data: {str(e)}")
     
+    async def save_batch_resume_data(self, resume_data_list: List[Dict[str, Any]]) -> List[int]:
+        """
+        Save multiple parsed resume data to database in batch.
+        
+        Args:
+            resume_data_list (List[Dict[str, Any]]): List of resume data dictionaries
+                Each dict should contain: filename, file_type, file_size, processing_time, parsed_data
+            
+        Returns:
+            List[int]: List of IDs of the saved records
+        """
+        try:
+            pool = await self._get_pool()
+            
+            async with pool.acquire() as conn:
+                # Start transaction
+                async with conn.transaction():
+                    record_ids = []
+                    
+                    for resume_data in resume_data_list:
+                        # Extract key information from parsed data
+                        candidate_name = resume_data['parsed_data'].get("Name", "")
+                        candidate_email = resume_data['parsed_data'].get("Email", "")
+                        candidate_phone = resume_data['parsed_data'].get("Phone", "")
+                        total_experience = resume_data['parsed_data'].get("TotalExperience", "")
+                        
+                        # Insert resume data
+                        record = await conn.fetchrow('''
+                            INSERT INTO resume_data 
+                            (filename, file_type, file_size, processing_time, parsed_data, 
+                             candidate_name, candidate_email, candidate_phone, total_experience)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                            RETURNING id
+                        ''', resume_data['filename'], resume_data['file_type'], 
+                             resume_data['file_size'], resume_data['processing_time'],
+                             json.dumps(resume_data['parsed_data']), candidate_name, 
+                             candidate_email, candidate_phone, total_experience)
+                        
+                        record_ids.append(record['id'])
+                    
+                    logger.info(f"Batch saved {len(record_ids)} resume records to database")
+                    return record_ids
+                
+        except Exception as e:
+            logger.error(f"Error saving batch resume data: {str(e)}")
+            raise Exception(f"Failed to save batch resume data: {str(e)}")
+    
     async def get_resume_by_id(self, resume_id: int) -> Optional[Dict[str, Any]]:
         """
         Get resume data by ID.

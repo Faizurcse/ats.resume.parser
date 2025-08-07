@@ -3,49 +3,55 @@ Pydantic schemas for the Resume Parser application.
 Simplified version with only essential models.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 
-class ResumeParseResponse(BaseModel):
-    """Response model for resume parsing endpoint."""
+class BatchResumeParseResponse(BaseModel):
+    """Response model for resume parsing endpoint (supports both single and multiple files)."""
     
-    # Dynamic fields based on resume content
-    # Using Dict[str, Any] to allow flexible field names
-    parsed_data: Dict[str, Any] = Field(
-        description="Parsed resume data with dynamic fields"
-    )
-    file_type: str = Field(description="Type of uploaded file")
-    processing_time: float = Field(description="Time taken to process the file in seconds")
+    total_files: int = Field(description="Total number of files processed")
+    successful_files: int = Field(description="Number of files successfully processed")
+    failed_files: int = Field(description="Number of files that failed to process")
+    total_processing_time: float = Field(description="Total time taken to process all files")
+    results: List[Dict[str, Any]] = Field(description="Results for each processed file")
     
     class Config:
         """Pydantic configuration."""
         schema_extra = {
             "example": {
-                "parsed_data": {
-                    "Name": "John Doe",
-                    "Email": "john.doe@email.com",
-                    "Phone": "+1-555-123-4567",
-                    "TotalExperience": "5 years",
-                    "Experience": [
-                        {
-                            "Company": "Tech Corp",
-                            "Position": "Software Engineer",
-                            "Duration": "2020-2023",
-                            "Description": "Developed web applications"
-                        }
-                    ],
-                    "Education": [
-                        {
-                            "Institution": "University of Technology",
-                            "Degree": "Bachelor's",
-                            "Field": "Computer Science",
-                            "Year": "2020"
-                        }
-                    ],
-                    "Skills": ["Python", "FastAPI", "React", "Docker"]
-                },
-                "file_type": "pdf",
-                "processing_time": 2.5
+                "total_files": 3,
+                "successful_files": 2,
+                "failed_files": 1,
+                "total_processing_time": 5.2,
+                "results": [
+                    {
+                        "filename": "resume1.pdf",
+                        "status": "success",
+                        "parsed_data": {
+                            "Name": "John Doe",
+                            "Email": "john.doe@email.com"
+                        },
+                        "file_type": "pdf",
+                        "processing_time": 2.1
+                    },
+                    {
+                        "filename": "resume2.png",
+                        "status": "success",
+                        "parsed_data": {
+                            "Name": "Jane Smith",
+                            "Email": "jane.smith@email.com"
+                        },
+                        "file_type": "png",
+                        "processing_time": 1.8
+                    },
+                    {
+                        "filename": "invalid.txt",
+                        "status": "failed",
+                        "error": "No text could be extracted from the file",
+                        "file_type": "txt",
+                        "processing_time": 0.1
+                    }
+                ]
             }
         }
 

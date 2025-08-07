@@ -24,6 +24,8 @@ class Settings:
     
     # File Processing Configuration
     MAX_FILE_SIZE: int = int(os.getenv("MAX_FILE_SIZE", "10485760"))  # 10MB default
+    MAX_BATCH_SIZE: int = int(os.getenv("MAX_BATCH_SIZE", "10"))  # Maximum files per batch
+    MAX_TOTAL_BATCH_SIZE: int = int(os.getenv("MAX_TOTAL_BATCH_SIZE", "52428800"))  # 50MB total batch size
     ALLOWED_EXTENSIONS: List[str] = [
         ".pdf", ".docx", ".doc", ".txt", ".rtf",
         ".png", ".jpg", ".jpeg", ".webp"

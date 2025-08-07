@@ -1,346 +1,286 @@
 # Resume Parser API
 
-A FastAPI-based resume parser application that combines **Computer Vision (OCR)** and **Natural Language Processing (NLP)** to extract structured information from resumes. The application supports multiple file formats and returns JSON output with intelligent data parsing.
+A powerful AI-powered resume parsing API that supports multiple file formats and batch processing. Built with FastAPI, PostgreSQL, and OpenAI.
 
-## 🎯 **Technology Stack**
+## 🚀 Features
 
-### **Computer Vision (CV) Components:**
-- ✅ **OCR (Optical Character Recognition)** - Tesseract for image-to-text conversion
-- ✅ **Image Processing** - PIL (Python Imaging Library) for image manipulation
-- ✅ **Multi-format Image Support** - PNG, JPG, JPEG, WEBP processing
+- **Unified Endpoint**: One endpoint handles both single and multiple file uploads
+- **Flexible Upload**: Upload 1 file or N number of files (up to 10)
+- **Multiple File Formats**: Support for PDF, DOCX, DOC, TXT, RTF, PNG, JPG, JPEG, WEBP
+- **AI-Powered Parsing**: Uses OpenAI GPT to extract structured data from resumes
+- **Database Storage**: All parsed data automatically saved to PostgreSQL
+- **Error Handling**: Individual file error tracking with detailed error messages
+- **Performance Metrics**: Processing time tracking for each file and total batch
+- **OCR Support**: Text extraction from images using Tesseract
+- **RESTful API**: Complete CRUD operations for resume management
 
-### **Natural Language Processing (NLP) Components:**
-- ✅ **GPT-3.5-turbo** - OpenAI API for intelligent text understanding
-- ✅ **Text Analysis** - Extracts structured data from unstructured text
-- ✅ **Information Extraction** - Identifies names, emails, experience, skills, etc.
+## 📋 API Endpoints
 
-### **Hybrid Approach (CV + NLP):**
-- ✅ **Computer Vision** → **OCR** → **Text Extraction**
-- ✅ **NLP** → **GPT Analysis** → **Structured Data**
-- ✅ **End-to-End Processing** - From image/text to structured JSON
-
-## 🚀 **Features**
-
-- **Multi-format Support**: PDF, DOCX, DOC, TXT, RTF, PNG, JPG, JPEG, WEBP
-- **Computer Vision**: OCR processing for image-based resumes
-- **NLP Processing**: AI-powered text understanding and information extraction
-- **Database Storage**: PostgreSQL database for storing parsed resume data
-- **RESTful API**: Complete CRUD operations for resume data management
-- **Dynamic Response**: Generates JSON fields based on actual resume content
-- **Experience Calculation**: Automatic calculation of total experience in months/years
-- **Professional Architecture**: Clean, maintainable MVC structure
-
-## 🏗️ **Project Architecture**
-
+### Main Upload Endpoint
 ```
-ResumeParser/
-├── app/
-│   ├── main.py                 # FastAPI application entry point
-│   ├── config/
-│   │   └── settings.py         # Configuration management
-│   ├── models/
-│   │   ├── schemas.py          # Pydantic models and schemas
-│   │   └── database.py         # SQLAlchemy database models
-│   ├── services/
-│   │   ├── file_processor.py   # CV + File processing logic
-│   │   ├── openai_service.py   # NLP + OpenAI API integration
-│   │   └── database_service.py # Database operations and CRUD
-│   └── controllers/
-│       └── resume_controller.py # API endpoints
-├── requirements.txt            # Python dependencies
-├── setup_database.py          # Database setup script
-└── README.md                  # Project documentation
+POST /api/v1/parse-resume
 ```
 
-## 🔧 **Code Structure & Working**
+**Request:**
+- Content-Type: `multipart/form-data`
+- Body: Files with field name `files` (can be 1 or multiple files)
 
-### **1. Computer Vision Processing (`app/services/file_processor.py`)**
-
-```python
-# Computer Vision Component: OCR for Image Processing
-async def _process_image(self, file_content: bytes) -> str:
-    """
-    Computer Vision: Extract text from image files using OCR.
-    This is a Computer Vision task - converting visual text to digital text.
-    """
-    try:
-        # CV Step 1: Load image from bytes
-        image = Image.open(io.BytesIO(file_content))
-        
-        # CV Step 2: Image preprocessing (convert to RGB)
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-        
-        # CV Step 3: OCR - Computer Vision text extraction
-        text_content = pytesseract.image_to_string(image)
-        
-        return text_content.strip()
-    except Exception as e:
-        raise Exception(f"Computer Vision OCR failed: {str(e)}")
-```
-
-### **2. NLP Processing (`app/services/openai_service.py`)**
-
-```python
-# NLP Component: AI-powered text understanding
-async def parse_resume_text(self, resume_text: str) -> Dict[str, Any]:
-    """
-    NLP: Parse resume text using OpenAI GPT for intelligent understanding.
-    This is an NLP task - understanding and structuring human language.
-    """
-    try:
-        # NLP Step 1: Create prompt for GPT
-        prompt = self._create_resume_parsing_prompt(resume_text)
-        
-        # NLP Step 2: Call OpenAI API (GPT-3.5-turbo)
-        response = self._call_openai_api(prompt)
-        
-        # NLP Step 3: Parse and structure the response
-        parsed_data = self._parse_openai_response(response)
-        
-        return parsed_data
-    except Exception as e:
-        raise Exception(f"NLP processing failed: {str(e)}")
-```
-
-### **3. Hybrid Processing Pipeline (`app/controllers/resume_controller.py`)**
-
-```python
-# Hybrid Approach: CV + NLP Pipeline
-async def parse_resume(file: UploadFile = File(...)):
-    """
-    Complete pipeline: Computer Vision → NLP → Structured Output
-    """
-    try:
-        # Step 1: File validation and reading
-        file_content = await file.read()
-        
-        # Step 2: Computer Vision (if image) or Direct Text Extraction
-        extracted_text = await file_processor.process_file(file_content, file.filename)
-        
-        # Step 3: NLP Processing with GPT
-        parsed_data = await openai_service.parse_resume_text(extracted_text)
-        
-        # Step 4: Return structured JSON
-        return ResumeParseResponse(
-            parsed_data=parsed_data,
-            file_type=file_type,
-            processing_time=processing_time
-        )
-    except Exception as e:
-        raise HTTPException(detail=f"Processing failed: {str(e)}")
-```
-
-## 📊 **Technology Breakdown**
-
-### **Computer Vision (CV) Usage:**
-- **OCR Processing**: Tesseract for image-to-text conversion
-- **Image Formats**: PNG, JPG, JPEG, WEBP
-- **Image Preprocessing**: RGB conversion, format handling
-- **Text Extraction**: Visual text → Digital text
-
-### **Natural Language Processing (NLP) Usage:**
-- **Text Understanding**: GPT-3.5-turbo for intelligent parsing
-- **Information Extraction**: Names, emails, experience, skills
-- **Structured Output**: Unstructured text → JSON data
-- **Experience Calculation**: Automatic duration calculation
-
-### **Hybrid Processing Flow:**
-```
-Input File → CV (OCR) → Text → NLP (GPT) → Structured JSON
-     ↓           ↓        ↓        ↓           ↓
-   Image    Computer   Raw    Natural    Structured
-   File     Vision    Text   Language   Data
-```
-
-## 🛠️ **Setup Instructions**
-
-### **Prerequisites**
-
-1. **Python 3.8+** installed
-2. **Tesseract OCR** (for Computer Vision):
-   - Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki
-   - Linux: `sudo apt-get install tesseract-ocr`
-   - macOS: `brew install tesseract`
-
-### **Installation**
-
-1. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd ResumeParser
-   ```
-
-2. **Create virtual environment**:
-   ```bash
-   python -m venv venv
-   # Windows
-   venv\Scripts\activate
-   # Linux/macOS
-   source venv/bin/activate
-   ```
-
-3. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Environment Setup**:
-   Create a `.env` file:
-   ```env
-   OPENAI_API_KEY=your_openai_api_key_here
-   MAX_FILE_SIZE=10485760
-   TESSERACT_CMD=tesseract
-   OCR_LANGUAGE=eng
-   ```
-
-5. **Run the application**:
-   ```bash
-   python run.py
-   ```
-
-## 📡 **API Usage**
-
-### **Resume Parsing Endpoint**
-
-**Endpoint**: `POST /api/v1/parse-resume`
-
-**Supports**: PDF, DOCX, DOC, TXT, RTF, PNG, JPG, JPEG, WEBP
-
-**Example**:
-```bash
-curl -X POST "http://localhost:8000/api/v1/parse-resume" \
-     -H "Content-Type: multipart/form-data" \
-     -F "file=@resume.pdf"
-```
-
-**Response Example**:
+**Response:**
 ```json
 {
-  "parsed_data": {
-    "Name": "John Doe",
-    "Email": "john.doe@email.com",
-    "Phone": "+1-555-123-4567",
-    "TotalExperience": "5 years 3 months",
-    "Experience": [
-      {
-        "Company": "Tech Corp",
-        "Position": "Software Engineer",
-        "Duration": "2020-2023",
-        "Description": "Developed web applications"
-      }
-    ],
-    "Education": [
-      {
-        "Institution": "University of Technology",
-        "Degree": "Bachelor's",
-        "Field": "Computer Science",
-        "Year": "2020"
-      }
-    ],
-    "Skills": ["Python", "FastAPI", "React", "Docker"]
-  },
-  "file_type": "pdf",
-  "processing_time": 2.5
+  "total_files": 3,
+  "successful_files": 2,
+  "failed_files": 1,
+  "total_processing_time": 5.2,
+  "results": [
+    {
+      "filename": "faiz.pdf",
+      "status": "success",
+      "parsed_data": {
+        "Name": "Faiz Ahmed",
+        "Email": "faiz@email.com",
+        "Phone": "+1-555-123-4567",
+        "TotalExperience": "5 years",
+        "Experience": [...],
+        "Education": [...],
+        "Skills": [...]
+      },
+      "file_type": "pdf",
+      "processing_time": 2.1
+    }
+  ]
 }
 ```
 
-### **Health Check**
+### Other Endpoints
 
-**Endpoint**: `GET /api/v1/health`
+- `GET /api/v1/health` - Health check
+- `GET /api/v1/resumes` - Get all resumes with pagination
+- `GET /api/v1/resumes/{resume_id}` - Get specific resume
+- `GET /api/v1/resumes/search/{search_term}` - Search resumes
+- `DELETE /api/v1/resumes/{resume_id}` - Delete resume
 
-**Response**: Application status and version
+## 🛠️ Installation & Setup
 
-## 🔍 **Technology Details**
+### Prerequisites
 
-### **Computer Vision Components:**
+- Python 3.8+
+- PostgreSQL database
+- OpenAI API key
+- Tesseract OCR (for image processing)
 
-1. **Tesseract OCR**:
-   - Converts image text to digital text
-   - Supports multiple languages
-   - Handles various image formats
+### 1. Clone the Repository
 
-2. **PIL (Python Imaging Library)**:
-   - Image preprocessing
-   - Format conversion (RGB)
-   - Image manipulation
-
-3. **Image Processing Pipeline**:
-   ```
-   Image File → PIL Load → RGB Convert → Tesseract OCR → Text Output
-   ```
-
-### **NLP Components:**
-
-1. **OpenAI GPT-3.5-turbo**:
-   - Intelligent text understanding
-   - Context-aware parsing
-   - Structured information extraction
-
-2. **Text Analysis Pipeline**:
-   ```
-   Raw Text → GPT Analysis → Structured JSON → Experience Calculation
-   ```
-
-3. **Information Extraction**:
-   - Personal details (name, email, phone)
-   - Professional experience
-   - Education history
-   - Skills and certifications
-   - Projects and achievements
-
-## 🎯 **Key Features**
-
-### **Computer Vision Features:**
-- ✅ **Multi-format Image Support**: PNG, JPG, JPEG, WEBP
-- ✅ **OCR Processing**: Automatic text extraction from images
-- ✅ **Image Preprocessing**: RGB conversion, format handling
-- ✅ **Error Handling**: Robust CV error management
-
-### **NLP Features:**
-- ✅ **Intelligent Parsing**: GPT-powered text understanding
-- ✅ **Dynamic Field Detection**: Adapts to resume content
-- ✅ **Experience Calculation**: Automatic duration computation
-- ✅ **Structured Output**: Clean JSON responses
-
-### **Hybrid Features:**
-- ✅ **Seamless Integration**: CV → NLP pipeline
-- ✅ **Multi-format Support**: Images and documents
-- ✅ **Intelligent Processing**: Best of both worlds
-- ✅ **Scalable Architecture**: Easy to extend
-
-## 🗄️ **Database Setup**
-
-### **1. Environment Configuration**
-Create a `.env` file in the project root with your database URL:
 ```bash
-DATABASE_URL=postgresql://neondb_owner:npg_h6IxCm7NduUE@ep-broad-bonus-a1yhtql1-pooler.ap-southeast-1.aws.neon.tech/Ats?sslmode=require&channel_binding=require
-OPENAI_API_KEY=your_openai_api_key_here
-DEBUG=True
+git clone <repository-url>
+cd ResumeParser
 ```
 
-### **2. Install Dependencies**
+### 2. Install Dependencies
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### **3. Database Features**
-- **PostgreSQL Integration**: Direct database connection using asyncpg
-- **Automatic Storage**: All parsed resumes are automatically saved to PostgreSQL
-- **CRUD Operations**: Complete API for managing resume data
-- **Search Functionality**: Search resumes by candidate name or email using SQL ILIKE
-- **Pagination**: Efficient data retrieval with pagination support
-- **Connection Pooling**: Optimized database connections
-- **Indexes**: Database indexes for faster queries
+### 3. Environment Configuration
 
-### **4. API Endpoints**
-- `POST /api/v1/parse-resume` - Parse and save resume
-- `GET /api/v1/resumes/{id}` - Get resume by ID
-- `GET /api/v1/resumes` - Get all resumes with pagination
-- `GET /api/v1/resumes/search/{term}` - Search resumes
-- `DELETE /api/v1/resumes/{id}` - Delete resume
+Copy the example environment file and configure it:
 
-### **5. Database Schema**
+```bash
+cp env.example .env
+```
+
+Edit `.env` with your configuration:
+
+```env
+# Database Configuration
+DATABASE_URL=postgresql://username:password@localhost:5432/resume_parser
+
+# OpenAI Configuration
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-3.5-turbo
+OPENAI_MAX_TOKENS=2000
+OPENAI_TEMPERATURE=0.1
+
+# File Processing Configuration
+MAX_FILE_SIZE=10485760
+MAX_BATCH_SIZE=10
+MAX_TOTAL_BATCH_SIZE=52428800
+
+# OCR Configuration
+TESSERACT_CMD=tesseract
+OCR_LANGUAGE=eng
+
+# Application Configuration
+DEBUG=False
+```
+
+### 4. Database Setup
+
+The application will automatically create the required database tables on first run.
+
+### 5. Run the Application
+
+```bash
+python run.py
+```
+
+The API will be available at `http://localhost:8000`
+
+## 📝 Usage Examples
+
+### Single File Upload (Python)
+
+```python
+import requests
+
+# Upload single file
+with open('faiz.pdf', 'rb') as f:
+    files = [('files', ('faiz.pdf', f.read(), 'application/pdf'))]
+
+response = requests.post(
+    'http://localhost:8000/api/v1/parse-resume',
+    files=files
+)
+
+if response.status_code == 200:
+    result = response.json()
+    print(f"Processed {result['total_files']} file")
+    print(f"Successful: {result['successful_files']}")
+    
+    if result['results']:
+        file_result = result['results'][0]
+        if file_result['status'] == 'success':
+            print(f"✅ {file_result['filename']}: {file_result['parsed_data']['Name']}")
+```
+
+### Multiple Files Upload (Python)
+
+```python
+import requests
+
+# Upload multiple files
+files = [
+    ('files', ('faiz.pdf', open('faiz.pdf', 'rb'), 'application/pdf')),
+    ('files', ('faiz.png', open('faiz.png', 'rb'), 'image/png')),
+    ('files', ('resume.txt', open('resume.txt', 'rb'), 'text/plain'))
+]
+
+response = requests.post(
+    'http://localhost:8000/api/v1/parse-resume',
+    files=files
+)
+
+if response.status_code == 200:
+    result = response.json()
+    print(f"Processed {result['total_files']} files")
+    print(f"Successful: {result['successful_files']}")
+    print(f"Failed: {result['failed_files']}")
+    
+    for file_result in result['results']:
+        if file_result['status'] == 'success':
+            print(f"✅ {file_result['filename']}: {file_result['parsed_data']['Name']}")
+        else:
+            print(f"❌ {file_result['filename']}: {file_result['error']}")
+```
+
+### cURL Examples
+
+**Single file:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/parse-resume" \
+  -F "files=@faiz.pdf"
+```
+
+**Multiple files:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/parse-resume" \
+  -F "files=@faiz.pdf" \
+  -F "files=@faiz.png" \
+  -F "files=@resume.txt"
+```
+
+### JavaScript Example
+
+```javascript
+const formData = new FormData();
+
+// Single file
+formData.append('files', file1);
+
+// OR Multiple files
+formData.append('files', file1);
+formData.append('files', file2);
+formData.append('files', file3);
+
+fetch('http://localhost:8000/api/v1/parse-resume', {
+  method: 'POST',
+  body: formData
+})
+.then(response => response.json())
+.then(data => {
+  console.log(`Processed ${data.total_files} files`);
+  console.log(`Successful: ${data.successful_files}`);
+  console.log(`Failed: ${data.failed_files}`);
+});
+```
+
+## 🧪 Testing
+
+You can test the API using:
+
+- **cURL commands** (examples provided above)
+- **Postman** or similar API testing tools
+- **Your own client applications** using the provided code examples
+- **FastAPI's automatic documentation** at `http://localhost:8000/docs`
+
+## 🔧 Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | Required |
+| `OPENAI_API_KEY` | OpenAI API key | Required |
+| `OPENAI_MODEL` | OpenAI model to use | `gpt-3.5-turbo` |
+| `OPENAI_MAX_TOKENS` | Maximum tokens for AI response | `2000` |
+| `OPENAI_TEMPERATURE` | AI response randomness | `0.1` |
+| `MAX_FILE_SIZE` | Maximum file size in bytes | `10485760` (10MB) |
+| `MAX_BATCH_SIZE` | Maximum files per request | `10` |
+| `MAX_TOTAL_BATCH_SIZE` | Maximum total batch size | `52428800` (50MB) |
+| `TESSERACT_CMD` | Tesseract command path | `tesseract` |
+| `OCR_LANGUAGE` | OCR language | `eng` |
+| `DEBUG` | Debug mode | `False` |
+
+### Supported File Formats
+
+- **Documents**: PDF, DOCX, DOC, TXT, RTF
+- **Images**: PNG, JPG, JPEG, WEBP
+
+### Limits
+
+- **Maximum files per request**: 10
+- **Maximum file size**: 10MB per file
+- **Maximum total batch size**: 50MB
+- **Supported formats**: PDF, DOCX, DOC, TXT, RTF, PNG, JPG, JPEG, WEBP
+
+## 🔍 Error Handling
+
+The API provides detailed error information for each file:
+
+- **File validation errors**: Invalid format, size limits, missing filename
+- **Processing errors**: Text extraction failures, AI parsing errors
+- **Database errors**: Connection issues, save failures
+
+Each file result includes:
+- `status`: "success" or "failed"
+- `error`: Detailed error message (if failed)
+- `processing_time`: Time taken to process the file
+
+## 💾 Database Schema
+
+The application uses PostgreSQL with the following schema:
+
 ```sql
 CREATE TABLE resume_data (
     id SERIAL PRIMARY KEY,
@@ -358,58 +298,113 @@ CREATE TABLE resume_data (
 );
 ```
 
-## 🚀 **Performance**
+## 🚀 Performance
 
-- **Computer Vision**: Fast OCR processing with Tesseract
-- **NLP**: Efficient GPT API calls with caching
-- **Database**: Fast PostgreSQL queries with indexing
-- **Hybrid**: Optimized pipeline for maximum accuracy
-- **Response Time**: 2-10 seconds depending on file size and complexity
+- **Unified processing**: Same endpoint handles 1 or N files
+- **Batch database saves**: Successful files are saved in a single transaction
+- **Memory efficient**: Files are processed one at a time to manage memory usage
+- **Timeout handling**: Individual file timeouts don't affect other files
+- **Async processing**: Non-blocking file processing and database operations
 
-## 🔧 **Development**
+## 🔧 Troubleshooting
 
-### **Adding New CV Features:**
-```python
-# Add new image format support
-async def _process_new_format(self, file_content: bytes) -> str:
-    # Computer Vision processing for new format
-    pass
+### Common Issues
+
+1. **"Maximum files allowed" error**
+   - Reduce the number of files in your request
+   - Check `MAX_BATCH_SIZE` setting
+
+2. **"File size exceeds limit" error**
+   - Compress or reduce file sizes
+   - Check `MAX_FILE_SIZE` setting
+
+3. **"Total batch size exceeds limit" error**
+   - Reduce the number or size of files
+   - Check `MAX_TOTAL_BATCH_SIZE` setting
+
+4. **"No text could be extracted" error**
+   - Ensure the file contains readable text
+   - Try a different file format
+   - Check if the file is corrupted
+
+5. **Database connection errors**
+   - Verify `DATABASE_URL` is correct
+   - Ensure PostgreSQL is running
+   - Check network connectivity
+
+6. **OpenAI API errors**
+   - Verify `OPENAI_API_KEY` is valid
+   - Check API quota and billing
+   - Ensure internet connectivity
+
+### Logs
+
+Check the application logs for detailed error information:
+
+```bash
+# View logs
+tail -f app.log
 ```
 
-### **Adding New NLP Features:**
-```python
-# Add new information extraction
-def _extract_new_field(self, text: str) -> str:
-    # NLP processing for new field
-    pass
+## 📊 Monitoring
+
+The API provides processing metrics:
+
+- Total processing time for the batch
+- Individual file processing times
+- Success/failure counts
+- Detailed error messages for failed files
+
+Use these metrics to monitor performance and identify issues.
+
+## 🎯 Key Benefits
+
+- **One Endpoint**: No need to choose between single or batch endpoints
+- **Flexible**: Upload 1 file or N files with the same API call
+- **Consistent Response**: Same response format regardless of file count
+- **Easy Integration**: Simple to integrate into any application
+- **Scalable**: Handles from 1 to 10 files efficiently
+- **AI-Powered**: Advanced resume parsing using OpenAI
+- **Multi-format**: Supports various file formats including images
+- **Database Storage**: Automatic data persistence and retrieval
+
+## 📁 Project Structure
+
+```
+ResumeParser/
+├── app/
+│   ├── config/
+│   │   └── settings.py          # Configuration management
+│   ├── controllers/
+│   │   └── resume_controller.py # API endpoints
+│   ├── models/
+│   │   └── schemas.py           # Pydantic models
+│   ├── services/
+│   │   ├── database_service.py  # Database operations
+│   │   ├── file_processor.py    # File processing & OCR
+│   │   └── openai_service.py    # AI parsing
+│   └── main.py                  # FastAPI application
+├── requirements.txt              # Python dependencies
+├── run.py                       # Application entry point
+├── env.example                  # Environment variables template
+└── README.md                    # This file
 ```
 
-## 📈 **Future Enhancements**
-
-### **Computer Vision Improvements:**
-- Advanced image preprocessing
-- Layout analysis
-- Table extraction
-- Multi-language OCR
-
-### **NLP Improvements:**
-- Custom GPT fine-tuning
-- Enhanced information extraction
-- Sentiment analysis
-- Skill matching
-
-## 🤝 **Contributing**
+## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure CV and NLP components work together
+3. Make your changes
+4. Add tests if applicable
 5. Submit a pull request
 
-## 📄 **License**
+## 📄 License
 
-MIT License - see LICENSE file for details
+This project is licensed under the MIT License.
 
----
+## 🆘 Support
 
-**This project demonstrates the power of combining Computer Vision and Natural Language Processing for intelligent document processing!** 🚀
+For support and questions:
+- Create an issue in the repository
+- Check the troubleshooting section above
+- Review the logs for detailed error information
