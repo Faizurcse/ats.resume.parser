@@ -1,0 +1,47 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Environment files
+.env
+.env.*  # e.g. .env.production, .env.dev
+
+# VS Code settings
+.vscode/
+
+# macOS files
+.DS_Store
+
+# Python virtualenv
+venv/
+env/
+.venv/
+
+# Log files
+*.log
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# PyInstaller
+dist/
+build/
+*.spec
+
+# pytest
+.cache/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Coverage
+htmlcov/
+coverage.xml
+*.cover
+
+# FastAPI auto reload
+*.pid
