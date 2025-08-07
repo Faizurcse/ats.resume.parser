@@ -79,6 +79,7 @@ Important guidelines:
 5. Return ONLY valid JSON, no additional text or explanations
 6. If a field has multiple values, use arrays
 7. Use "Unknown" for missing information rather than omitting fields
+8. Leave TotalExperience field empty - we will calculate it automatically from the Experience data
 
 Resume text:
 {resume_text}
@@ -90,7 +91,7 @@ Return the parsed data in this exact JSON format:
   "Phone": "phone number",
   "Address": "full address if available",
   "Summary": "professional summary or objective",
-  "TotalExperience": "total years of experience (e.g., '5 years', '3.5 years')",
+  "TotalExperience": "leave this field empty - we will calculate it automatically",
   "Experience": [
     {{
       "Company": "company name",
@@ -286,6 +287,12 @@ Return the parsed data in this exact JSON format:
             # Keep other types as is
             else:
                 cleaned_data[key] = value
+        
+        # Override TotalExperience with our calculated value if Experience is present
+        if "Experience" in cleaned_data and isinstance(cleaned_data["Experience"], list):
+            calculated_experience = self._calculate_total_experience(cleaned_data["Experience"])
+            cleaned_data["TotalExperience"] = calculated_experience
+            logger.info(f"Overriding AI TotalExperience with calculated value: {calculated_experience}")
         
         return cleaned_data
     

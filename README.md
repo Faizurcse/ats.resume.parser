@@ -24,6 +24,8 @@ A FastAPI-based resume parser application that combines **Computer Vision (OCR)*
 - **Multi-format Support**: PDF, DOCX, DOC, TXT, RTF, PNG, JPG, JPEG, WEBP
 - **Computer Vision**: OCR processing for image-based resumes
 - **NLP Processing**: AI-powered text understanding and information extraction
+- **Database Storage**: PostgreSQL database for storing parsed resume data
+- **RESTful API**: Complete CRUD operations for resume data management
 - **Dynamic Response**: Generates JSON fields based on actual resume content
 - **Experience Calculation**: Automatic calculation of total experience in months/years
 - **Professional Architecture**: Clean, maintainable MVC structure
@@ -37,13 +39,16 @@ ResumeParser/
 │   ├── config/
 │   │   └── settings.py         # Configuration management
 │   ├── models/
-│   │   └── schemas.py          # Pydantic models and schemas
+│   │   ├── schemas.py          # Pydantic models and schemas
+│   │   └── database.py         # SQLAlchemy database models
 │   ├── services/
 │   │   ├── file_processor.py   # CV + File processing logic
-│   │   └── openai_service.py   # NLP + OpenAI API integration
+│   │   ├── openai_service.py   # NLP + OpenAI API integration
+│   │   └── database_service.py # Database operations and CRUD
 │   └── controllers/
 │       └── resume_controller.py # API endpoints
 ├── requirements.txt            # Python dependencies
+├── setup_database.py          # Database setup script
 └── README.md                  # Project documentation
 ```
 
@@ -304,10 +309,60 @@ curl -X POST "http://localhost:8000/api/v1/parse-resume" \
 - ✅ **Intelligent Processing**: Best of both worlds
 - ✅ **Scalable Architecture**: Easy to extend
 
+## 🗄️ **Database Setup**
+
+### **1. Environment Configuration**
+Create a `.env` file in the project root with your database URL:
+```bash
+DATABASE_URL=postgresql://neondb_owner:npg_h6IxCm7NduUE@ep-broad-bonus-a1yhtql1-pooler.ap-southeast-1.aws.neon.tech/Ats?sslmode=require&channel_binding=require
+OPENAI_API_KEY=your_openai_api_key_here
+DEBUG=True
+```
+
+### **2. Install Dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+### **3. Database Features**
+- **PostgreSQL Integration**: Direct database connection using asyncpg
+- **Automatic Storage**: All parsed resumes are automatically saved to PostgreSQL
+- **CRUD Operations**: Complete API for managing resume data
+- **Search Functionality**: Search resumes by candidate name or email using SQL ILIKE
+- **Pagination**: Efficient data retrieval with pagination support
+- **Connection Pooling**: Optimized database connections
+- **Indexes**: Database indexes for faster queries
+
+### **4. API Endpoints**
+- `POST /api/v1/parse-resume` - Parse and save resume
+- `GET /api/v1/resumes/{id}` - Get resume by ID
+- `GET /api/v1/resumes` - Get all resumes with pagination
+- `GET /api/v1/resumes/search/{term}` - Search resumes
+- `DELETE /api/v1/resumes/{id}` - Delete resume
+
+### **5. Database Schema**
+```sql
+CREATE TABLE resume_data (
+    id SERIAL PRIMARY KEY,
+    filename VARCHAR(255) NOT NULL,
+    file_type VARCHAR(50) NOT NULL,
+    file_size INTEGER NOT NULL,
+    processing_time FLOAT NOT NULL,
+    parsed_data JSONB NOT NULL,
+    candidate_name VARCHAR(255),
+    candidate_email VARCHAR(255),
+    candidate_phone VARCHAR(100),
+    total_experience VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
 ## 🚀 **Performance**
 
 - **Computer Vision**: Fast OCR processing with Tesseract
 - **NLP**: Efficient GPT API calls with caching
+- **Database**: Fast PostgreSQL queries with indexing
 - **Hybrid**: Optimized pipeline for maximum accuracy
 - **Response Time**: 2-10 seconds depending on file size and complexity
 

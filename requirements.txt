@@ -3,6 +3,9 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
+# Database dependencies
+asyncpg==0.30.0
+
 # File processing libraries
 python-docx==1.1.0
 PyMuPDF==1.24.11
