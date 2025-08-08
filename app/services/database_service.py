@@ -238,7 +238,7 @@ class DatabaseService:
             async with pool.acquire() as conn:
                 records = await conn.fetch('''
                     SELECT id, filename, file_type, candidate_name, candidate_email, 
-                           total_experience, created_at
+                           total_experience, parsed_data, created_at
                     FROM resume_data 
                     ORDER BY created_at DESC
                     LIMIT $1 OFFSET $2
@@ -252,6 +252,7 @@ class DatabaseService:
                         "candidate_name": record['candidate_name'],
                         "candidate_email": record['candidate_email'],
                         "total_experience": record['total_experience'],
+                        "parsed_data": record['parsed_data'],
                         "created_at": record['created_at'].isoformat() if record['created_at'] else None
                     }
                     for record in records
@@ -277,7 +278,7 @@ class DatabaseService:
             async with pool.acquire() as conn:
                 records = await conn.fetch('''
                     SELECT id, filename, candidate_name, candidate_email, 
-                           total_experience, created_at
+                           total_experience, parsed_data, created_at
                     FROM resume_data 
                     WHERE candidate_name ILIKE $1 OR candidate_email ILIKE $1
                     ORDER BY created_at DESC
@@ -290,6 +291,7 @@ class DatabaseService:
                         "candidate_name": record['candidate_name'],
                         "candidate_email": record['candidate_email'],
                         "total_experience": record['total_experience'],
+                        "parsed_data": record['parsed_data'],
                         "created_at": record['created_at'].isoformat() if record['created_at'] else None
                     }
                     for record in records
