@@ -96,7 +96,7 @@ Return the parsed data in this exact JSON format:
     {{
       "Company": "company name",
       "Position": "job title",
-      "Duration": "time period",
+      "Duration": "time period (e.g., 'Sep 2024 - Present', '2024-09 - Present', '1 year 3 months')",
       "Description": "job description and achievements"
     }}
   ],
@@ -188,6 +188,9 @@ Return the parsed data in this exact JSON format:
             # Clean the response (remove markdown code blocks if present)
             cleaned_response = self._clean_openai_response(response)
             
+            # Log the cleaned response for debugging
+            logger.info(f"Cleaned AI response: {cleaned_response}")
+            
             # Parse JSON
             parsed_data = json.loads(cleaned_response)
             
@@ -202,7 +205,20 @@ Return the parsed data in this exact JSON format:
             if ("TotalExperience" not in cleaned_data or 
                 not cleaned_data["TotalExperience"] or 
                 cleaned_data["TotalExperience"].lower() in ["unknown", "n/a", "none", "less than a year"]):
-                cleaned_data["TotalExperience"] = self._calculate_total_experience(cleaned_data.get("Experience", []))
+                
+                # Log the experience data for debugging
+                experience_data = cleaned_data.get("Experience", [])
+                logger.info(f"Experience data from AI: {experience_data}")
+                
+                calculated_experience = self._calculate_total_experience(experience_data)
+                logger.info(f"Calculated experience: {calculated_experience}")
+                
+                # If still 0 months, try to extract from resume text as fallback
+                if calculated_experience == "0 months" and experience_data:
+                    logger.info("Attempting fallback experience extraction from resume text")
+                    # This could be enhanced to parse the original resume text for experience
+                
+                cleaned_data["TotalExperience"] = calculated_experience
             
             return cleaned_data
             
@@ -378,13 +394,22 @@ Return the parsed data in this exact JSON format:
             total_months = 0
             
             for exp in experience_list:
-                if isinstance(exp, dict) and "Duration" in exp:
-                    duration = exp["Duration"]
-                    if isinstance(duration, str):
+                if isinstance(exp, dict):
+                    # Try multiple possible duration fields
+                    duration = None
+                    for field in ["Duration", "duration", "Time", "time", "Period", "period"]:
+                        if field in exp:
+                            duration = exp[field]
+                            break
+                    
+                    if duration and isinstance(duration, str):
+                        logger.info(f"Processing duration: '{duration}'")
+                        
                         # Handle date range formats (e.g., "2025-05 - Present", "2024-08 - 2025-03")
-                        if "-" in duration:
+                        if "-" in duration or "–" in duration:
                             months = self._calculate_months_from_date_range(duration)
                             total_months += months
+                            logger.info(f"Date range '{duration}' calculated as {months} months")
                         else:
                             # Handle explicit duration strings
                             duration_lower = duration.lower()
@@ -396,6 +421,7 @@ Return the parsed data in this exact JSON format:
                                     try:
                                         years = float(year_parts[0].strip())
                                         total_months += int(years * 12)
+                                        logger.info(f"Extracted {years} years from '{duration}'")
                                     except ValueError:
                                         pass
                             
@@ -406,6 +432,7 @@ Return the parsed data in this exact JSON format:
                                     try:
                                         months = float(month_parts[0].strip())
                                         total_months += int(months)
+                                        logger.info(f"Extracted {months} months from '{duration}'")
                                     except ValueError:
                                         pass
             
@@ -464,8 +491,10 @@ Return the parsed data in this exact JSON format:
             start_date_str = parts[0].strip()
             end_date_str = parts[1].strip()
             
-            # Parse start date (format: "2025-05" or "2024-08")
+            # Parse start date (try both formats: "2025-05" or "Sep 2024")
             start_date = self._parse_date_format(start_date_str)
+            if not start_date:
+                start_date = self._parse_date(start_date_str)
             if not start_date:
                 return 0
             
@@ -474,6 +503,8 @@ Return the parsed data in this exact JSON format:
                 end_date = datetime.now()
             else:
                 end_date = self._parse_date_format(end_date_str)
+                if not end_date:
+                    end_date = self._parse_date(end_date_str)
                 if not end_date:
                     return 0
             
@@ -502,7 +533,7 @@ Return the parsed data in this exact JSON format:
             # Remove extra spaces and clean
             date_str = date_str.strip()
             
-            # Handle month names
+            # Handle month names (including all common abbreviations)
             month_names = {
                 "january": 1, "jan": 1,
                 "february": 2, "feb": 2,
@@ -520,6 +551,7 @@ Return the parsed data in this exact JSON format:
             
             # Extract month and year
             parts = date_str.lower().split()
+            
             if len(parts) >= 2:
                 month_name = parts[0]
                 year_str = parts[1]

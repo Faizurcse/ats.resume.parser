@@ -11,7 +11,7 @@ A powerful AI-powered resume parsing API that supports multiple file formats and
 - **Database Storage**: All parsed data automatically saved to PostgreSQL
 - **Error Handling**: Individual file error tracking with detailed error messages
 - **Performance Metrics**: Processing time tracking for each file and total batch
-- **OCR Support**: Text extraction from images using Tesseract
+- **OCR Support**: Text extraction from images using EasyOCR (pip-installable)
 - **RESTful API**: Complete CRUD operations for resume management
 
 ## 📋 API Endpoints
@@ -67,7 +67,7 @@ POST /api/v1/parse-resume
 - Python 3.8+
 - PostgreSQL database
 - OpenAI API key
-- Tesseract OCR (for image processing)
+- No external OCR installation required (uses pip-installable alternatives)
 
 ### 1. Clone the Repository
 
@@ -107,9 +107,11 @@ MAX_FILE_SIZE=10485760
 MAX_BATCH_SIZE=10
 MAX_TOTAL_BATCH_SIZE=52428800
 
-# OCR Configuration
-TESSERACT_CMD=tesseract
-OCR_LANGUAGE=eng
+# OCR Configuration (New pip-installable alternatives)
+OCR_METHOD=easyocr
+OCR_LANGUAGE=en
+OCR_CONFIDENCE_THRESHOLD=0.5
+USE_GPU=False
 
 # Application Configuration
 DEBUG=False
@@ -248,8 +250,9 @@ You can test the API using:
 | `MAX_FILE_SIZE` | Maximum file size in bytes | `10485760` (10MB) |
 | `MAX_BATCH_SIZE` | Maximum files per request | `10` |
 | `MAX_TOTAL_BATCH_SIZE` | Maximum total batch size | `52428800` (50MB) |
-| `TESSERACT_CMD` | Tesseract command path | `tesseract` |
-| `OCR_LANGUAGE` | OCR language | `eng` |
+| `OCR_LANGUAGE` | OCR language | `en` |
+| `OCR_CONFIDENCE_THRESHOLD` | Minimum confidence for OCR text | `0.5` |
+| `USE_GPU` | Use GPU acceleration if available | `False` |
 | `DEBUG` | Debug mode | `False` |
 
 ### Supported File Formats

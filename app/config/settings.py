@@ -36,9 +36,10 @@ class Settings:
     APP_VERSION: str = "1.0.0"
     APP_DESCRIPTION: str = "AI-powered resume parsing API with multi-format support"
     
-    # OCR Configuration
-    TESSERACT_CMD: str = os.getenv("TESSERACT_CMD", "tesseract")
-    OCR_LANGUAGE: str = os.getenv("OCR_LANGUAGE", "eng")
+    # OCR Configuration (EasyOCR only - pip-installable)
+    OCR_LANGUAGE: str = os.getenv("OCR_LANGUAGE", "en")
+    OCR_CONFIDENCE_THRESHOLD: float = float(os.getenv("OCR_CONFIDENCE_THRESHOLD", "0.5"))
+    USE_GPU: bool = os.getenv("USE_GPU", "False").lower() == "true"
     
     # API Configuration
     API_PREFIX: str = "/api/v1"

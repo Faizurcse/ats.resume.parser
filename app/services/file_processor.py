@@ -11,7 +11,9 @@ from typing import Optional
 import fitz  # PyMuPDF
 import docx2txt
 from PIL import Image
-import pytesseract
+# import pytesseract  # Removed - requires external Tesseract installation
+import easyocr
+import numpy as np
 from app.config.settings import settings
 
 # Configure logging
@@ -23,9 +25,16 @@ class FileProcessor:
     
     def __init__(self):
         """Initialize the file processor with OCR configuration."""
-        # Configure Tesseract path if specified
-        if hasattr(settings, 'TESSERACT_CMD') and settings.TESSERACT_CMD != "tesseract":
-            pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD
+        # Initialize EasyOCR reader (will download models on first use)
+        self.easyocr_reader = None
+        try:
+            logger.info("Initializing EasyOCR...")
+            self.easyocr_reader = easyocr.Reader(['en'], gpu=False)  # Set gpu=True if you have GPU
+            logger.info("EasyOCR initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize EasyOCR: {e}")
+            logger.error("Please ensure EasyOCR is properly installed: pip install easyocr")
+            raise Exception(f"EasyOCR initialization failed: {e}. Please check installation.")
     
     async def process_file(self, file_content: bytes, filename: str) -> str:
         """
@@ -158,7 +167,7 @@ class FileProcessor:
     
     async def _process_image(self, file_content: bytes) -> str:
         """
-        Extract text from image files using OCR.
+        Extract text from image files using EasyOCR.
         
         Args:
             file_content (bytes): Image file content
@@ -167,6 +176,10 @@ class FileProcessor:
             str: Extracted text content
         """
         try:
+            # Check if EasyOCR is available
+            if not self.easyocr_reader:
+                raise Exception("EasyOCR is not available. Please check installation.")
+            
             # Open image from bytes
             image = Image.open(io.BytesIO(file_content))
             
@@ -174,14 +187,25 @@ class FileProcessor:
             if image.mode != 'RGB':
                 image = image.convert('RGB')
             
-            # Extract text using OCR
-            text_content = pytesseract.image_to_string(image)
+            # Convert PIL image to numpy array
+            image_array = np.array(image)
             
-            if not text_content or not text_content.strip():
-                raise Exception("No text content found in the image")
+            # Extract text using EasyOCR
+            results = self.easyocr_reader.readtext(image_array)
             
-            logger.info(f"Successfully extracted text from image: {len(text_content)} characters")
-            return text_content.strip()
+            # Extract text from results
+            text_content = []
+            for (bbox, text, prob) in results:
+                if prob > 0.5:  # Only include text with confidence > 50%
+                    text_content.append(text)
+            
+            extracted_text = " ".join(text_content)
+            
+            if not extracted_text.strip():
+                raise Exception("No text content could be extracted from the image")
+            
+            logger.info(f"Successfully extracted text from image using EasyOCR: {len(extracted_text)} characters")
+            return extracted_text.strip()
             
         except Exception as e:
             logger.error(f"Error processing image: {str(e)}")
