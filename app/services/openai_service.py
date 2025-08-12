@@ -80,6 +80,7 @@ Important guidelines:
 6. If a field has multiple values, use arrays
 7. Use "Unknown" for missing information rather than omitting fields
 8. Leave TotalExperience field empty - we will calculate it automatically from the Experience data
+9. IMPORTANT: Extract GitHub, LinkedIn, portfolio, and other social media/profile links if present in the resume
 
 Resume text:
 {resume_text}
@@ -90,6 +91,9 @@ Return the parsed data in this exact JSON format:
   "Email": "email@example.com",
   "Phone": "phone number",
   "Address": "full address if available",
+  "GitHub": "GitHub profile URL if found",
+  "LinkedIn": "LinkedIn profile URL if found",
+  "Portfolio": "Portfolio website URL if found",
   "Summary": "professional summary or objective",
   "TotalExperience": "leave this field empty - we will calculate it automatically",
   "Experience": [

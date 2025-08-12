@@ -11,6 +11,7 @@ import time
 
 from app.config.settings import settings
 from app.controllers.resume_controller import router as resume_router
+from app.controllers.job_posting_controller import router as job_posting_router
 
 # Configure logging
 logging.basicConfig(
@@ -74,6 +75,7 @@ async def log_requests(request: Request, call_next):
 
 # Include routers
 app.include_router(resume_router)
+app.include_router(job_posting_router)
 
 # Root endpoint
 @app.get("/")
@@ -91,6 +93,7 @@ async def root():
         "endpoints": {
             "health": "/api/v1/health",
             "parse_resume": "/api/v1/parse-resume",
+            "generate_job_posting": "/api/v1/job-posting/generate",
             "docs": "/docs",
             "redoc": "/redoc"
         },
