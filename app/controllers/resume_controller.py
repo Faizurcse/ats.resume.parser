@@ -5,6 +5,8 @@ Simplified version with only essential endpoints.
 
 import time
 import logging
+import uuid
+import os
 from typing import Dict, Any, List
 
 from fastapi import APIRouter, File, UploadFile, HTTPException, status
@@ -139,6 +141,23 @@ async def parse_resume(files: List[UploadFile] = File(...)):
                     failed_files += 1
                     continue
                 
+                # Save file to upload folder
+                
+                # Create upload folder if it doesn't exist
+                os.makedirs(settings.UPLOAD_FOLDER, exist_ok=True)
+                
+                # Generate unique filename to avoid conflicts
+                file_uuid = str(uuid.uuid4())
+                file_extension_with_dot = os.path.splitext(file.filename)[1]
+                unique_filename = f"{file_uuid}{file_extension_with_dot}"
+                file_path = os.path.join(settings.UPLOAD_FOLDER, unique_filename)
+                
+                # Save file to disk
+                with open(file_path, "wb") as f:
+                    f.write(file_content)
+                
+                logger.info(f"File saved to upload folder: {file_path}")
+                
                 # Process file and extract text
                 logger.info(f"Processing file: {file.filename}")
                 extracted_text = await file_processor.process_file(file_content, file.filename)
@@ -171,6 +190,7 @@ async def parse_resume(files: List[UploadFile] = File(...)):
                 # Add to batch save data
                 batch_data_to_save.append({
                     "filename": file.filename,
+                    "file_path": file_path,
                     "file_type": file_type,
                     "file_size": file_size,
                     "processing_time": file_processing_time,
@@ -255,17 +275,19 @@ async def get_resume(resume_id: int):
 @router.get("/resumes")
 async def get_all_resumes(limit: int = 100, offset: int = 0):
     """
-    Get all resume records with pagination.
+    Get ALL resume records with pagination (including duplicates).
+    This endpoint returns every resume that was uploaded, regardless of duplicates.
     
     Args:
         limit (int): Number of records to return (default: 100)
         offset (int): Number of records to skip (default: 0)
         
     Returns:
-        List[Dict]: List of resume records
+        List[Dict]: List of ALL resume records (including duplicates)
     """
     try:
-        resumes = await database_service.get_all_resumes(limit=limit, offset=offset)
+        # Use the method that explicitly returns ALL resumes including duplicates
+        resumes = await database_service.get_all_resumes_including_duplicates(limit=limit, offset=offset)
         return {"resumes": resumes, "total": len(resumes)}
         
     except Exception as e:

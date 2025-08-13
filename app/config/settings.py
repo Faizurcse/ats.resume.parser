@@ -45,6 +45,9 @@ class Settings:
     API_PREFIX: str = "/api/v1"
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
     
+    # File Upload Configuration
+    UPLOAD_FOLDER: str = os.getenv("UPLOAD_FOLDER", "uploads")
+    
     @classmethod
     def validate_settings(cls) -> bool:
         """

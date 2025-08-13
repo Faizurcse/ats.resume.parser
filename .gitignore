@@ -45,3 +45,15 @@ coverage.xml
 
 # FastAPI auto reload
 *.pid
+
+# Uploaded files
+uploads/
+*.pdf
+*.docx
+*.doc
+*.txt
+*.rtf
+*.png
+*.jpg
+*.jpeg
+*.webp

@@ -12,6 +12,7 @@ import time
 from app.config.settings import settings
 from app.controllers.resume_controller import router as resume_router
 from app.controllers.job_posting_controller import router as job_posting_router
+from app.controllers.download_resume_controller import router as download_resume_router
 
 # Configure logging
 logging.basicConfig(
@@ -30,14 +31,42 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
-# Add CORS middleware
+# Add CORS middleware - must be added before other middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this properly for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # Specific origins
+    allow_credentials=True,  # Allow credentials
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Specific methods
+    allow_headers=["*"],  # Allow all headers
+    expose_headers=["*"]  # Expose all headers
 )
+
+# Add CORS headers middleware
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    """
+    Ensure CORS headers are always present in responses.
+    """
+    # Handle preflight OPTIONS request
+    if request.method == "OPTIONS":
+        from fastapi.responses import Response
+        response = Response()
+        response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+    
+    # Process normal request
+    response = await call_next(request)
+    
+    # Add CORS headers to all responses
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    
+    return response
 
 # Add request timing middleware
 @app.middleware("http")
@@ -73,9 +102,135 @@ async def log_requests(request: Request, call_next):
     
     return response
 
+# Test CORS endpoint
+@app.get("/test-cors")
+async def test_cors():
+    """
+    Test endpoint to verify CORS is working.
+    """
+    from fastapi.responses import JSONResponse
+    response = JSONResponse(
+        content={"message": "CORS test successful", "timestamp": time.time()}
+    )
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
+# Test OpenAI API key endpoint
+@app.get("/test-openai")
+async def test_openai_api():
+    """
+    Test endpoint to verify OpenAI API key is working.
+    """
+    try:
+        from app.services.openai_service import OpenAIService
+        from app.config.settings import settings
+        
+        # Check if API key is set
+        if not settings.OPENAI_API_KEY:
+            return {
+                "status": "❌ FAILED",
+                "message": "OpenAI API key is not set in .env file",
+                "error": "OPENAI_API_KEY environment variable is missing",
+                "timestamp": time.time()
+            }
+        
+        # Test if API key is valid
+        openai_service = OpenAIService()
+        
+        # Try a simple API call
+        test_response = openai_service.client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": "Hello, this is a test message"}],
+            max_tokens=10
+        )
+        
+        return {
+            "status": "✅ WORKING",
+            "message": "OpenAI API key is valid and working!",
+            "api_key_set": True,
+            "api_key_valid": True,
+            "model": "gpt-3.5-turbo",
+            "test_response": test_response.choices[0].message.content,
+            "timestamp": time.time()
+        }
+        
+    except Exception as e:
+        error_msg = str(e)
+        
+        # Check for specific error types
+        if "Invalid API key" in error_msg or "authentication" in error_msg.lower():
+            return {
+                "status": "❌ FAILED",
+                "message": "OpenAI API key is invalid or expired",
+                "error": error_msg,
+                "api_key_set": True,
+                "api_key_valid": False,
+                "timestamp": time.time()
+            }
+        elif "insufficient" in error_msg.lower() or "quota" in error_msg.lower():
+            return {
+                "status": "❌ FAILED",
+                "message": "OpenAI account has insufficient credits/quota",
+                "error": error_msg,
+                "api_key_set": True,
+                "api_key_valid": True,
+                "quota_issue": True,
+                "timestamp": time.time()
+            }
+        elif "rate limit" in error_msg.lower():
+            return {
+                "status": "⚠️ WARNING",
+                "message": "OpenAI API rate limit exceeded",
+                "error": error_msg,
+                "api_key_set": True,
+                "api_key_valid": True,
+                "rate_limit_issue": True,
+                "timestamp": time.time()
+            }
+        else:
+            return {
+                "status": "❌ FAILED",
+                "message": "OpenAI API test failed with unknown error",
+                "error": error_msg,
+                "api_key_set": True,
+                "api_key_valid": False,
+                "timestamp": time.time()
+            }
+
 # Include routers
 app.include_router(resume_router)
 app.include_router(job_posting_router)
+app.include_router(download_resume_router)
+
+# Add specific preflight handler for parse-resume
+@app.options("/api/v1/parse-resume")
+async def parse_resume_preflight():
+    """
+    Handle preflight OPTIONS requests for parse-resume endpoint.
+    """
+    from fastapi.responses import Response
+    response = Response()
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
+
+# Add general preflight handler for CORS
+@app.options("/{full_path:path}")
+async def preflight_handler(full_path: str):
+    """
+    Handle preflight OPTIONS requests for CORS.
+    """
+    from fastapi.responses import Response
+    response = Response()
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
 
 # Root endpoint
 @app.get("/")
@@ -94,6 +249,13 @@ async def root():
             "health": "/api/v1/health",
             "parse_resume": "/api/v1/parse-resume",
             "generate_job_posting": "/api/v1/job-posting/generate",
+            "all_resumes": "/api/v1/resumes",
+            "download_unique_resumes": "/api/v1/download/resumes",
+            "download_unique_resumes_with_files": "/api/v1/download/resumes/with-files",
+            "download_all_resumes_admin": "/api/v1/download/resumes/all",
+            "download_resume_file": "/api/v1/download/resume/{resume_id}",
+            "test_cors": "/test-cors",
+            "test_openai": "/test-openai",
             "docs": "/docs",
             "redoc": "/redoc"
         },
@@ -158,6 +320,16 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Settings validation failed: {str(e)}")
         raise
+    
+    # Initialize database and ensure schema is up to date
+    try:
+        from app.services.database_service import DatabaseService
+        db_service = DatabaseService()
+        await db_service._initialize()
+        logger.info("Database schema validation completed")
+    except Exception as e:
+        logger.error(f"Database schema validation failed: {str(e)}")
+        # Don't fail startup for database issues, but log them
 
 # Shutdown event
 @app.on_event("shutdown")
