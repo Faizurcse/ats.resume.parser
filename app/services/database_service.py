@@ -439,7 +439,7 @@ class DatabaseService:
                 if 'file_path' in existing_columns and 'is_unique' in existing_columns:
                     # Full schema - use all columns
                     query = '''
-                        SELECT id, filename, file_type, candidate_name, candidate_email, 
+                        SELECT id, filename, file_path, file_type, candidate_name, candidate_email, 
                                total_experience, parsed_data, created_at
                         FROM resume_data 
                         ORDER BY created_at DESC
@@ -461,6 +461,7 @@ class DatabaseService:
                     {
                         "id": record['id'],
                         "filename": record['filename'],
+                        "file_path": record.get('file_path', ''),
                         "file_type": record['file_type'],
                         "candidate_name": record['candidate_name'],
                         "candidate_email": record['candidate_email'],
@@ -491,7 +492,7 @@ class DatabaseService:
             
             async with pool.acquire() as conn:
                 records = await conn.fetch('''
-                    SELECT id, filename, candidate_name, candidate_email, 
+                    SELECT id, filename, file_path, candidate_name, candidate_email, 
                            total_experience, parsed_data, created_at
                     FROM resume_data 
                     WHERE candidate_name ILIKE $1 OR candidate_email ILIKE $1
@@ -502,6 +503,7 @@ class DatabaseService:
                     {
                         "id": record['id'],
                         "filename": record['filename'],
+                        "file_path": record.get('file_path', ''),
                         "candidate_name": record['candidate_name'],
                         "candidate_email": record['candidate_email'],
                         "total_experience": record['total_experience'],
@@ -638,7 +640,7 @@ class DatabaseService:
             async with pool.acquire() as conn:
                 records = await conn.fetch('''
                     SELECT id, filename, file_path, file_type, candidate_name, candidate_email, 
-                           total_experience, created_at
+                           total_experience, parsed_data, created_at
                     FROM resume_data 
                     ORDER BY created_at DESC
                     LIMIT $1 OFFSET $2
@@ -653,6 +655,7 @@ class DatabaseService:
                         "candidate_name": record['candidate_name'],
                         "candidate_email": record['candidate_email'],
                         "total_experience": record['total_experience'],
+                        "parsed_data": record['parsed_data'],
                         "created_at": record['created_at'].isoformat() if record['created_at'] else None
                     }
                     for record in records
