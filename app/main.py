@@ -13,6 +13,7 @@ from app.config.settings import settings
 from app.controllers.resume_controller import router as resume_router
 from app.controllers.job_posting_controller import router as job_posting_router
 from app.controllers.download_resume_controller import router as download_resume_router
+from app.AI_SEARCH.controller import router as ai_search_router
 
 # Configure logging
 logging.basicConfig(
@@ -203,6 +204,7 @@ async def test_openai_api():
 app.include_router(resume_router)
 app.include_router(job_posting_router)
 app.include_router(download_resume_router)
+app.include_router(ai_search_router)
 
 # Add specific preflight handler for parse-resume
 @app.options("/api/v1/parse-resume")
@@ -254,6 +256,8 @@ async def root():
             "download_unique_resumes_with_files": "/api/v1/download/resumes/with-files",
             "download_all_resumes_admin": "/api/v1/download/resumes/all",
             "download_resume_file": "/api/v1/download/resume/{resume_id}",
+            "ai_search": "/ai-search/search",
+            "embedding_status": "/ai-search/embedding-status",
             "test_cors": "/test-cors",
             "test_openai": "/test-openai",
             "docs": "/docs",

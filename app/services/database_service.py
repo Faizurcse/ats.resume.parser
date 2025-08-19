@@ -66,6 +66,14 @@ class DatabaseService:
     async def _create_tables(self):
         """Create database tables."""
         async with self.pool.acquire() as conn:
+            # Enable pgvector extension if available
+            try:
+                await conn.execute('CREATE EXTENSION IF NOT EXISTS vector')
+                logger.info("pgvector extension enabled successfully")
+            except Exception as e:
+                logger.warning(f"Could not enable pgvector extension: {str(e)}")
+                # Continue execution even if pgvector is not available
+            
             # Create table if it doesn't exist
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS resume_data (
@@ -85,6 +93,27 @@ class DatabaseService:
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 )
             ''')
+            
+            # Create embeddings table for vector storage
+            try:
+                await conn.execute('''
+                    CREATE TABLE IF NOT EXISTS resume_embeddings (
+                        id SERIAL PRIMARY KEY,
+                        resume_id INTEGER NOT NULL REFERENCES resume_data(id) ON DELETE CASCADE,
+                        embedding JSONB NOT NULL,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        UNIQUE(resume_id)
+                    )
+                ''')
+                logger.info("Resume embeddings table created successfully")
+                
+                # Create index on resume_id for faster lookups
+                await conn.execute('CREATE INDEX IF NOT EXISTS idx_resume_embeddings_resume_id ON resume_embeddings(resume_id)')
+                
+            except Exception as e:
+                logger.warning(f"Could not create embeddings table: {str(e)}")
+                # Continue execution even if embeddings table creation fails
             
             # Add missing columns if they don't exist (for existing tables)
             await self._add_missing_columns(conn)

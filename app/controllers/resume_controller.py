@@ -9,7 +9,7 @@ import uuid
 import os
 from typing import Dict, Any, List
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, status
+from fastapi import APIRouter, File, UploadFile, HTTPException, status, BackgroundTasks
 from fastapi.responses import JSONResponse
 
 from app.models.schemas import (
@@ -20,6 +20,7 @@ from app.models.schemas import (
 from app.services.file_processor import FileProcessor
 from app.services.openai_service import OpenAIService
 from app.services.database_service import DatabaseService
+from app.AI_SEARCH.embedding_service import EmbeddingService
 from app.config.settings import settings
 
 # Configure logging
@@ -32,6 +33,7 @@ router = APIRouter(prefix="/api/v1", tags=["resume"])
 file_processor = FileProcessor()
 openai_service = OpenAIService()
 database_service = DatabaseService()
+embedding_service = EmbeddingService()
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -56,8 +58,33 @@ async def health_check():
             detail="Health check failed"
         )
 
+async def create_embeddings_background(record_ids: List[int]):
+    """Background task to create embeddings for resumes."""
+    try:
+        logger.info(f"Starting background embedding creation for {len(record_ids)} resumes")
+        success_count = 0
+        failed_count = 0
+        
+        for record_id in record_ids:
+            try:
+                result = await embedding_service.create_resume_embedding(record_id)
+                if result['success']:
+                    success_count += 1
+                    logger.info(f"✅ Background embedding created for resume {record_id}")
+                else:
+                    failed_count += 1
+                    logger.error(f"❌ Background embedding failed for resume {record_id}: {result['message']}")
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"❌ Background embedding exception for resume {record_id}: {str(e)}")
+        
+        logger.info(f"🎯 Background embedding complete: {success_count} successful, {failed_count} failed")
+        
+    except Exception as e:
+        logger.error(f"Fatal error in background embedding task: {str(e)}")
+
 @router.post("/parse-resume", response_model=BatchResumeParseResponse)
-async def parse_resume(files: List[UploadFile] = File(...)):
+async def parse_resume(files: List[UploadFile] = File(...), background_tasks: BackgroundTasks = None):
     """
     Parse resumes from uploaded files and save to database.
     Supports both single and multiple file uploads.
@@ -216,6 +243,44 @@ async def parse_resume(files: List[UploadFile] = File(...)):
             try:
                 record_ids = await database_service.save_batch_resume_data(batch_data_to_save)
                 logger.info(f"Successfully saved {len(record_ids)} resume records to database")
+                
+                # Automatically create embeddings for all saved resumes
+                embedding_success_count = 0
+                embedding_failed_count = 0
+                
+                for record_id in record_ids:
+                    try:
+                        result = await embedding_service.create_resume_embedding(record_id)
+                        if result['success']:
+                            embedding_success_count += 1
+                            logger.info(f"✅ Embedding created for resume {record_id}")
+                        else:
+                            embedding_failed_count += 1
+                            logger.error(f"❌ Failed to create embedding for resume {record_id}: {result['message']}")
+                    except Exception as embedding_error:
+                        embedding_failed_count += 1
+                        logger.error(f"❌ Exception creating embedding for resume {record_id}: {str(embedding_error)}")
+                
+                if embedding_success_count > 0:
+                    logger.info(f"🎉 Successfully created embeddings for {embedding_success_count} resumes")
+                
+                if embedding_failed_count > 0:
+                    logger.warning(f"⚠️ Failed to create embeddings for {embedding_failed_count} resumes. Manual embedding creation may be needed.")
+                    
+                    # Optionally add background task for failed embeddings
+                    if background_tasks:
+                        background_tasks.add_task(create_embeddings_background, record_ids)
+                        logger.info("🔄 Added background task to retry embedding creation")
+                    
+                # Add embedding status to response
+                results.append({
+                    "embedding_status": {
+                        "successful": embedding_success_count,
+                        "failed": embedding_failed_count,
+                        "total": len(record_ids)
+                    }
+                })
+                    
             except Exception as e:
                 logger.error(f"Error saving batch data to database: {str(e)}")
                 # Don't fail the entire request if database save fails

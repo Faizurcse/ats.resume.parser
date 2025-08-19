@@ -14,6 +14,7 @@ class Settings:
     """Application settings and configuration management."""
     
     # Database Configuration
+    PORT: str = os.getenv("PORT", "")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     
     # OpenAI API Configuration
@@ -44,6 +45,7 @@ class Settings:
     # API Configuration
     API_PREFIX: str = "/api/v1"
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
+    PORT: int = int(PORT)
     
     # File Upload Configuration
     UPLOAD_FOLDER: str = os.getenv("UPLOAD_FOLDER", "uploads")
