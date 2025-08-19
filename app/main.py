@@ -35,7 +35,7 @@ app = FastAPI(
 # Add CORS middleware - must be added before other middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # Specific origins
+    allow_origins=["https://pyats.workisy.in", "https://pyats.workisy.in"],  # Specific origins
     allow_credentials=True,  # Allow credentials
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Specific methods
     allow_headers=["*"],  # Allow all headers
@@ -52,7 +52,7 @@ async def add_cors_headers(request: Request, call_next):
     if request.method == "OPTIONS":
         from fastapi.responses import Response
         response = Response()
-        response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
+        response.headers["Access-Control-Allow-Origin"] = "https://pyats.workisy.in"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "*"
         response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -62,7 +62,7 @@ async def add_cors_headers(request: Request, call_next):
     response = await call_next(request)
     
     # Add CORS headers to all responses
-    response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
+    response.headers["Access-Control-Allow-Origin"] = "https://pyats.workisy.in"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
     response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -214,7 +214,7 @@ async def parse_resume_preflight():
     """
     from fastapi.responses import Response
     response = Response()
-    response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
+    response.headers["Access-Control-Allow-Origin"] = "https://pyats.workisy.in"
     response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
     response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -228,7 +228,7 @@ async def preflight_handler(full_path: str):
     """
     from fastapi.responses import Response
     response = Response()
-    response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
+    response.headers["Access-Control-Allow-Origin"] = "https://pyats.workisy.in"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
     response.headers["Access-Control-Allow-Credentials"] = "true"
