@@ -35,39 +35,19 @@ app = FastAPI(
 # Add CORS middleware - must be added before other middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://aiats.workisy.in", "https://aiats.workisy.in"],  # Specific origins
+    allow_origins=[
+        "https://aiats.workisy.in",
+        "https://pyats.workisy.in",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173"
+    ],  # Allowed origins
     allow_credentials=True,  # Allow credentials
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Specific methods
     allow_headers=["*"],  # Allow all headers
     expose_headers=["*"]  # Expose all headers
 )
-
-# Add CORS headers middleware
-@app.middleware("http")
-async def add_cors_headers(request: Request, call_next):
-    """
-    Ensure CORS headers are always present in responses.
-    """
-    # Handle preflight OPTIONS request
-    if request.method == "OPTIONS":
-        from fastapi.responses import Response
-        response = Response()
-        response.headers["Access-Control-Allow-Origin"] = "https://aiats.workisy.in"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        return response
-    
-    # Process normal request
-    response = await call_next(request)
-    
-    # Add CORS headers to all responses
-    response.headers["Access-Control-Allow-Origin"] = "https://aiats.workisy.in"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    
-    return response
 
 # Add request timing middleware
 @app.middleware("http")
@@ -113,9 +93,6 @@ async def test_cors():
     response = JSONResponse(
         content={"message": "CORS test successful", "timestamp": time.time()}
     )
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
 # Test OpenAI API key endpoint
@@ -206,33 +183,7 @@ app.include_router(job_posting_router)
 app.include_router(download_resume_router)
 app.include_router(ai_search_router)
 
-# Add specific preflight handler for parse-resume
-@app.options("/api/v1/parse-resume")
-async def parse_resume_preflight():
-    """
-    Handle preflight OPTIONS requests for parse-resume endpoint.
-    """
-    from fastapi.responses import Response
-    response = Response()
-    response.headers["Access-Control-Allow-Origin"] = "https://aiats.workisy.in"
-    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    return response
 
-# Add general preflight handler for CORS
-@app.options("/{full_path:path}")
-async def preflight_handler(full_path: str):
-    """
-    Handle preflight OPTIONS requests for CORS.
-    """
-    from fastapi.responses import Response
-    response = Response()
-    response.headers["Access-Control-Allow-Origin"] = "https://aiats.workisy.in"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    return response
 
 # Root endpoint
 @app.get("/")
@@ -350,7 +301,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=settings.PORT,
         reload=settings.DEBUG,
         log_level="info"
     )

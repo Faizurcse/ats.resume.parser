@@ -14,7 +14,7 @@ class Settings:
     """Application settings and configuration management."""
     
     # Database Configuration
-    PORT: str = os.getenv("PORT", "")
+    PORT: str = os.getenv("PORT", "8000")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     
     # OpenAI API Configuration
