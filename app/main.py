@@ -263,10 +263,12 @@ async def startup_event():
     """
     Application startup event handler.
     """
-    logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    logger.info(f"Debug mode: {settings.DEBUG}")
-    logger.info(f"Max file size: {settings.MAX_FILE_SIZE} bytes")
-    logger.info(f"Supported formats: {settings.ALLOWED_EXTENSIONS}")
+    logger.info("🚀" + "="*50)
+    logger.info(f"🚀 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    logger.info(f"🔧 Debug mode: {settings.DEBUG}")
+    logger.info(f"📁 Max file size: {settings.MAX_FILE_SIZE} bytes")
+    logger.info(f"📄 Supported formats: {settings.ALLOWED_EXTENSIONS}")
+    logger.info("="*50)
     
     # Validate settings
     try:
@@ -279,11 +281,15 @@ async def startup_event():
     # Initialize database and ensure schema is up to date
     try:
         from app.services.database_service import DatabaseService
+        logger.info("🔌 Attempting to connect to database...")
         db_service = DatabaseService()
         await db_service._initialize()
-        logger.info("Database schema validation completed")
+        logger.info("✅ Database schema validation completed successfully!")
+        logger.info("🚀 Database is ready and all tables are up to date!")
+        logger.info("🎉 Application startup completed successfully!")
+        logger.info("🌐 Server is ready to accept requests!")
     except Exception as e:
-        logger.error(f"Database schema validation failed: {str(e)}")
+        logger.error(f"❌ Database schema validation failed: {str(e)}")
         # Don't fail startup for database issues, but log them
 
 # Shutdown event

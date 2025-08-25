@@ -53,11 +53,17 @@ class DatabaseService:
                 ssl='require'
             )
             
+            # Test the connection
+            async with self.pool.acquire() as conn:
+                await conn.execute('SELECT 1')
+                logger.info("✅ Database connection established successfully!")
+                logger.info(f"📊 Connected to database: {database} on {host}:{port}")
+            
             # Create tables
             await self._create_tables()
             
             self._init_done = True
-            logger.info("Database service initialized successfully")
+            logger.info("🎉 Database service initialized successfully")
             
         except Exception as e:
             logger.error(f"Database initialization failed: {str(e)}")
@@ -93,6 +99,7 @@ class DatabaseService:
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 )
             ''')
+            logger.info("📋 Resume data table ready")
             
             # Create embeddings table for vector storage
             try:
@@ -106,7 +113,7 @@ class DatabaseService:
                         UNIQUE(resume_id)
                     )
                 ''')
-                logger.info("Resume embeddings table created successfully")
+                logger.info("🔍 Resume embeddings table ready")
                 
                 # Create index on resume_id for faster lookups
                 await conn.execute('CREATE INDEX IF NOT EXISTS idx_resume_embeddings_resume_id ON resume_embeddings(resume_id)')
@@ -135,10 +142,13 @@ class DatabaseService:
                     ON resume_data(candidate_email) 
                     WHERE candidate_email IS NOT NULL AND candidate_email != ''
                 ''')
-                logger.info("Regular index on candidate_email created successfully")
+                logger.info("📊 Index on candidate_email created successfully")
             except Exception as e:
                 logger.warning(f"Could not create index on candidate_email: {str(e)}")
                 # Continue execution even if index creation fails
+            
+            logger.info("🎯 All database indexes created successfully")
+            logger.info("✨ Database schema setup completed!")
     
     async def _add_missing_columns(self, conn):
         """Add missing columns to existing tables for backward compatibility."""
