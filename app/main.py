@@ -35,18 +35,47 @@ app = FastAPI(
 # Add CORS middleware - must be added before other middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://aiats.workisy.in",
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173"
-    ],  # Allowed origins
-    allow_credentials=True,  # Allow credentials
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Specific methods
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=False,  # Must be False when using wildcard origins
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],  # Specific methods
     allow_headers=["*"],  # Allow all headers
-    expose_headers=["*"]  # Expose all headers
+    expose_headers=["*"],  # Expose all headers
+    max_age=86400  # Cache preflight response for 24 hours
 )
+
+# Add preflight handler for CORS
+@app.options("/{full_path:path}")
+async def preflight_handler(full_path: str):
+    """
+    Handle preflight OPTIONS requests for CORS.
+    """
+    return JSONResponse(
+        content={"message": "Preflight request handled"},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Max-Age": "86400"
+        }
+    )
+
+# Add CORS headers middleware
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    """
+    Add CORS headers to all responses.
+    """
+    response = await call_next(request)
+    
+    # Add CORS headers if not already present
+    if "Access-Control-Allow-Origin" not in response.headers:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    if "Access-Control-Allow-Methods" not in response.headers:
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, HEAD"
+    if "Access-Control-Allow-Headers" not in response.headers:
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
 
 # Add request timing middleware
 @app.middleware("http")
@@ -90,8 +119,17 @@ async def test_cors():
     """
     from fastapi.responses import JSONResponse
     response = JSONResponse(
-        content={"message": "CORS test successful", "timestamp": time.time()}
+        content={
+            "message": "CORS test successful", 
+            "timestamp": time.time(),
+            "cors_enabled": True,
+            "allowed_origins": ["*"]  # Allow all origins
+        }
     )
+    # Add CORS headers explicitly
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, HEAD"
+    response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
 # Test OpenAI API key endpoint
