@@ -14,7 +14,7 @@ module.exports = {
       OPENAI_MODEL: 'gpt-4o-mini',
       OPENAI_MAX_TOKENS: '400',
       OPENAI_TEMPERATURE: '0.0',
-      DATABASE_URL: 'postgresql://root:Ai_ats@2000@147.93.155.233:5432/ai_ats',
+      DATABASE_URL: 'postgresql://root:Ai_ats%402000@147.93.155.233:5432/ai_ats',
       DEBUG: 'False'
     },
     error_file: './logs/err.log',
