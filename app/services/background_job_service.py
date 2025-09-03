@@ -115,7 +115,7 @@ class BackgroundJobService:
                 try:
                     job_data = await asyncio.wait_for(
                         self.job_service.generate_job_posting(prompt),
-                        timeout=10.0
+                        timeout=35.0
                     )
                     return job_data
                 except Exception as e:

@@ -59,11 +59,11 @@ class JobPostingService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Generate job posting: {prompt}"}
                 ],
-                max_tokens=400,  # Further reduced for faster response
-                temperature=0.0,  # Zero temperature for fastest, most consistent responses
-                top_p=0.1,  # Low top_p for faster generation
+                max_tokens=800,  # Increased for better response quality
+                temperature=0.1,  # Slight randomness for variety
+                top_p=0.9,  # Higher top_p for better quality
                 response_format={"type": "json_object"},  # Force JSON response
-                timeout=5.0  # Reduced timeout to 5 seconds
+                timeout=30.0  # Increased timeout to 30 seconds for reliability
             )
             
             response_content = response.choices[0].message.content.strip()
@@ -81,7 +81,15 @@ class JobPostingService:
             raise e
         except Exception as e:
             logger.error(f"Error generating job posting: {str(e)}")
-            raise Exception(f"Failed to generate job posting: {str(e)}")
+            # Try to provide more specific error messages
+            if "timeout" in str(e).lower():
+                raise Exception(f"Request timed out while generating job posting. Please try again.")
+            elif "rate limit" in str(e).lower():
+                raise Exception(f"API rate limit exceeded. Please try again in a few moments.")
+            elif "authentication" in str(e).lower() or "api key" in str(e).lower():
+                raise Exception(f"API authentication failed. Please check your OpenAI API key.")
+            else:
+                raise Exception(f"Failed to generate job posting: {str(e)}")
     
     def _is_detailed_prompt(self, prompt: str) -> bool:
         """Check if prompt contains detailed information."""
