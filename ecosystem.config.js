@@ -10,7 +10,7 @@ module.exports = {
     env: {
       NODE_ENV: 'production',
       PORT: '8000',
-      OPENAI_API_KEY: 'k-proj-IcwG21HhI9Yiue94-vdiRh_87PrrkJaWqKfM672mtaoWaTZ5tagpisAlQV5bGO46yBXqCSf9UET3BlbkFJqZcyVej3vHSE3JdoA53In_CGZplr3iujWMpq3UGWoutRwTWADxtdBEaXC0vHh9kyGgrS8uiTMA',
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
       OPENAI_MODEL: 'gpt-4o-mini',
       OPENAI_MAX_TOKENS: '400',
       OPENAI_TEMPERATURE: '0.0',
