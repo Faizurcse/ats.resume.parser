@@ -1,8 +1,8 @@
 module.exports = {
   apps: [{
     name: 'AI_Ats_python_Backend',
-    script: 'gunicorn',
-    args: '--config gunicorn.conf.py app.main:app',
+    script: 'python',
+    args: 'run.py',
     instances: 1,
     autorestart: true,
     watch: false,
