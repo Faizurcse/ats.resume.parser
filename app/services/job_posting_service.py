@@ -59,11 +59,11 @@ class JobPostingService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Generate job posting: {prompt}"}
                 ],
-                max_tokens=600,  # Further reduced for faster response
+                max_tokens=400,  # Further reduced for faster response
                 temperature=0.0,  # Zero temperature for fastest, most consistent responses
                 top_p=0.1,  # Low top_p for faster generation
                 response_format={"type": "json_object"},  # Force JSON response
-                timeout=10.0  # Add explicit timeout to OpenAI client
+                timeout=5.0  # Reduced timeout to 5 seconds
             )
             
             response_content = response.choices[0].message.content.strip()

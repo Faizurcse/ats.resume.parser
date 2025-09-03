@@ -160,7 +160,10 @@ async def bulk_job_generator(request: BulkJobPostingRequest):
             )
         
         # Determine processing strategy based on count
-        if request.count <= 20:
+        if request.count <= 5:
+            # Very small scale: Process with minimal timeout
+            return await _process_very_small_scale(request, start_time)
+        elif request.count <= 20:
             # Small scale: Process synchronously with immediate response
             return await _process_small_scale(request, start_time)
         elif request.count <= 100:
@@ -179,6 +182,65 @@ async def bulk_job_generator(request: BulkJobPostingRequest):
             status_code=500,
             detail=f"Failed to generate bulk job postings: {str(e)}"
         )
+
+async def _process_very_small_scale(request: BulkJobPostingRequest, start_time: float) -> BulkJobPostingResponse:
+    """Process very small scale requests (1-5 jobs) with minimal timeout."""
+    import asyncio
+    
+    # Initialize the job posting service
+    job_service = JobPostingService()
+    
+    # For very small scale, process sequentially to avoid timeouts
+    bulk_jobs = []
+    
+    for i in range(request.count):
+        try:
+            # Create simple prompt variation
+            if i == 0:
+                prompt = request.prompt
+            else:
+                prompt = f"{request.prompt} - Job {i+1}"
+            
+            # Generate single job with very short timeout
+            job_data = await asyncio.wait_for(
+                job_service.generate_job_posting(prompt),
+                timeout=3.0  # Very short timeout
+            )
+            
+            if job_data and isinstance(job_data, dict):
+                bulk_jobs.append(job_data)
+                
+        except asyncio.TimeoutError:
+            logger.warning(f"Job {i+1} timed out, skipping")
+            continue
+        except Exception as e:
+            logger.error(f"Error generating job {i+1}: {str(e)}")
+            continue
+    
+    if not bulk_jobs:
+        # Try one more time with the original prompt
+        try:
+            fallback_job = await asyncio.wait_for(
+                job_service.generate_job_posting(request.prompt),
+                timeout=5.0
+            )
+            if fallback_job:
+                bulk_jobs = [fallback_job]
+        except Exception as e:
+            logger.error(f"Fallback job generation failed: {str(e)}")
+    
+    if not bulk_jobs:
+        raise HTTPException(status_code=500, detail="Failed to generate any valid job postings.")
+    
+    execution_time = round(time.time() - start_time, 2)
+    
+    return BulkJobPostingResponse(
+        success=True,
+        data=bulk_jobs,
+        message=f"Successfully generated {len(bulk_jobs)} out of {request.count} job postings in {execution_time} seconds",
+        time=execution_time,
+        jobCount=len(bulk_jobs)
+    )
 
 async def _process_small_scale(request: BulkJobPostingRequest, start_time: float) -> BulkJobPostingResponse:
     """Process small scale requests (1-20 jobs) synchronously."""
@@ -204,7 +266,7 @@ async def _process_small_scale(request: BulkJobPostingRequest, start_time: float
             try:
                 job_data = await asyncio.wait_for(
                     job_service.generate_job_posting(prompt), 
-                    timeout=8.0
+                    timeout=5.0  # Reduced to 5 seconds per job
                 )
                 return job_data if job_data and isinstance(job_data, dict) else None
             except Exception as e:
@@ -213,11 +275,11 @@ async def _process_small_scale(request: BulkJobPostingRequest, start_time: float
     
     tasks = [generate_single_job(prompt, i) for i, prompt in enumerate(varied_prompts)]
     
-    # Execute with timeout
+    # Execute with aggressive timeout for small scale
     try:
         results = await asyncio.wait_for(
             asyncio.gather(*tasks, return_exceptions=True),
-            timeout=60.0
+            timeout=30.0  # Reduced to 30 seconds for small scale
         )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Request timed out. Please try with fewer jobs.")
@@ -225,19 +287,35 @@ async def _process_small_scale(request: BulkJobPostingRequest, start_time: float
     # Filter results
     bulk_jobs = [job for job in results if job is not None and not isinstance(job, Exception)]
     
-    if not bulk_jobs:
+    # If we got some results, return them even if not all succeeded
+    if bulk_jobs:
+        execution_time = round(time.time() - start_time, 2)
+        success_rate = (len(bulk_jobs) / request.count) * 100
+        
+        return BulkJobPostingResponse(
+            success=True,
+            data=bulk_jobs,
+            message=f"Successfully generated {len(bulk_jobs)} out of {request.count} job postings in {execution_time} seconds",
+            time=execution_time,
+            jobCount=len(bulk_jobs)
+        )
+    else:
+        # If no results, try to generate at least one job as fallback
+        try:
+            fallback_job = await job_service.generate_job_posting(request.prompt)
+            if fallback_job:
+                execution_time = round(time.time() - start_time, 2)
+                return BulkJobPostingResponse(
+                    success=True,
+                    data=[fallback_job],
+                    message=f"Generated 1 fallback job posting in {execution_time} seconds",
+                    time=execution_time,
+                    jobCount=1
+                )
+        except Exception as e:
+            logger.error(f"Fallback job generation failed: {str(e)}")
+        
         raise HTTPException(status_code=500, detail="Failed to generate any valid job postings.")
-    
-    execution_time = round(time.time() - start_time, 2)
-    success_rate = (len(bulk_jobs) / request.count) * 100
-    
-    return BulkJobPostingResponse(
-        success=True,
-        data=bulk_jobs,
-        message=f"Successfully generated {len(bulk_jobs)} out of {request.count} job postings in {execution_time} seconds",
-        time=execution_time,
-        jobCount=len(bulk_jobs)
-    )
 
 async def _process_medium_scale(request: BulkJobPostingRequest, start_time: float) -> BulkJobPostingResponse:
     """Process medium scale requests (21-100 jobs) with extended timeout."""
