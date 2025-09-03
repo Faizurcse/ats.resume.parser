@@ -345,18 +345,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.on_event("startup")
 async def startup_event():
     """
-    Application startup event handler with comprehensive status display.
+    Application startup event handler with basic status display.
     """
     try:
-        # Import and use the comprehensive startup status service
-        from app.services.startup_status_service import startup_status_service
-        
-        # Display comprehensive startup status
-        await startup_status_service.display_comprehensive_startup_status()
-        
-    except Exception as e:
-        logger.error(f"❌ Startup status display failed: {str(e)}")
-        # Fallback to basic startup message
+        # Basic startup message - avoid heavy operations during startup
         logger.info("🚀" + "="*50)
         logger.info(f"🚀 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
         logger.info(f"🔧 Debug mode: {settings.DEBUG}")
@@ -364,6 +356,16 @@ async def startup_event():
         logger.info(f"📄 Supported formats: {settings.ALLOWED_EXTENSIONS}")
         logger.info("="*50)
         logger.info("🌐 Server is starting...")
+        logger.info("📚 API Documentation: http://localhost:8000/docs")
+        logger.info("📖 ReDoc Documentation: http://localhost:8000/redoc")
+        logger.info("="*50)
+        
+        # Note: Comprehensive startup status is available at /startup-status endpoint
+        logger.info("ℹ️  For detailed system status, visit: /startup-status")
+        
+    except Exception as e:
+        logger.error(f"❌ Startup failed: {str(e)}")
+        # Don't re-raise the exception to prevent startup failure
 
 # Shutdown event
 @app.on_event("shutdown")
