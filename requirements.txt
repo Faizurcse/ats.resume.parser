@@ -1,6 +1,6 @@
 # FastAPI and server dependencies
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
 python-multipart==0.0.6
 
 # Database dependencies
@@ -18,11 +18,11 @@ docx2txt==0.8
 easyocr==1.7.2
 
 # OpenAI API
-openai==1.3.7
-httpx==0.27.0
+openai>=1.3.7
+httpx>=0.27.0
 
 # Vector embeddings and AI search (optional - system will work with fallback if not installed)
-numpy==1.24.3
+numpy>=1.26.0
 # scikit-learn==1.3.0
 # sentence-transformers==2.2.2
 
