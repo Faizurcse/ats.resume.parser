@@ -7,7 +7,9 @@ from pydantic import BaseModel
 from typing import Dict, Any
 import logging
 import json
+from datetime import datetime
 from app.services.job_posting_service import JobPostingService
+from app.services.background_job_service import background_job_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/job-posting", tags=["Job Posting"])
@@ -17,7 +19,8 @@ class JobPostingRequest(BaseModel):
 
 class BulkJobPostingRequest(BaseModel):
     prompt: str
-    count: int = 10  # Default to 10 jobs
+    count: int = 5  # Default to 5 jobs
+    batch_size: int = 10  # Optional batch size for large requests
 
 class JobPostingResponse(BaseModel):
     success: bool
@@ -31,6 +34,17 @@ class BulkJobPostingResponse(BaseModel):
     message: str
     time: float
     jobCount: int
+
+class JobStatusResponse(BaseModel):
+    success: bool
+    job_id: str
+    status: str
+    completed_count: int
+    total_count: int
+    failed_count: int
+    progress_percentage: float
+    estimated_remaining_minutes: int
+    results: list[Dict[str, Any]] = []
 
 @router.post("/generate", response_model=JobPostingResponse)
 async def generate_job_posting(request: JobPostingRequest):
@@ -119,12 +133,13 @@ async def generate_job_posting(request: JobPostingRequest):
 async def bulk_job_generator(request: BulkJobPostingRequest):
     """
     Generate multiple job postings based on the provided prompt.
+    Automatically handles small (1-20), medium (21-100), and large (100+) scales.
     
     Args:
-        request: BulkJobPostingRequest containing the prompt and count
+        request: BulkJobPostingRequest containing the prompt, count, and optional batch_size
         
     Returns:
-        BulkJobPostingResponse with array of generated job postings
+        BulkJobPostingResponse with array of generated job postings or job_id for large requests
     """
     import time
     start_time = time.time()
@@ -138,119 +153,23 @@ async def bulk_job_generator(request: BulkJobPostingRequest):
             )
         
         # Validate count
-        if request.count <= 0 or request.count > 50:
+        if request.count <= 0 or request.count > 10000:
             raise HTTPException(
                 status_code=400,
-                detail="Count must be between 1 and 50"
+                detail="Count must be between 1 and 10,000"
             )
         
-        # Initialize the job posting service
-        job_service = JobPostingService()
-        
-        # Generate multiple job postings in parallel for faster results
-        import asyncio
-        
-        # Check if the prompt contains specific skills to create skill-specific variations
-        prompt_lower = request.prompt.lower()
-        if any(skill in prompt_lower for skill in ['java', 'python', 'javascript', 'react', 'angular', 'vue', 'node', 'frontend', 'backend', 'full stack', 'mobile', 'devops', 'data science', 'machine learning']):
-            # Create skill-specific variations
-            skill_variations = [
-                "Junior", "Senior", "Lead", "Principal", "Architect", "Backend", "Frontend", 
-                "Full Stack", "Microservices", "Spring", "Enterprise", "Cloud", "DevOps", 
-                "API", "Database", "Security", "Performance", "Scalable", "Distributed"
-            ]
-            
-            # Create varied prompts for parallel processing
-            varied_prompts = []
-            for i in range(request.count):
-                if i < len(skill_variations):
-                    varied_prompt = f"{request.prompt} - {skill_variations[i]}"
-                else:
-                    varied_prompt = f"{request.prompt} - Level {i+1}"
-                varied_prompts.append(varied_prompt)
+        # Determine processing strategy based on count
+        if request.count <= 20:
+            # Small scale: Process synchronously with immediate response
+            return await _process_small_scale(request, start_time)
+        elif request.count <= 100:
+            # Medium scale: Process with extended timeout
+            return await _process_medium_scale(request, start_time)
         else:
-            # Generic job variations for non-skill-specific prompts
-            job_variations = [
-                "Software Developer", "Data Analyst", "Product Manager", "Marketing Specialist",
-                "Sales Representative", "HR Coordinator", "Financial Analyst", "UX Designer",
-                "DevOps Engineer", "Business Analyst", "Customer Success Manager", "Operations Manager",
-                "Frontend Developer", "Backend Developer", "Full Stack Developer", "Mobile Developer",
-                "Data Scientist", "Machine Learning Engineer", "Cloud Architect", "Security Engineer"
-            ]
+            # Large scale: Start background processing and return job_id
+            return await _process_large_scale(request, start_time)
             
-            # Create varied prompts for parallel processing
-            varied_prompts = []
-            for i in range(request.count):
-                if i < len(job_variations):
-                    varied_prompt = f"{request.prompt} - {job_variations[i]}"
-                else:
-                    varied_prompt = f"{request.prompt} - Job #{i+1}"
-                varied_prompts.append(varied_prompt)
-        
-        # Check if the main prompt is invalid before generating jobs
-        try:
-            # Test the main prompt first
-            test_job = await job_service.generate_job_posting(request.prompt)
-        except ValueError as e:
-            # If main prompt is invalid, return error immediately
-            raise HTTPException(
-                status_code=400,
-                detail=str(e)
-            )
-        
-        # Generate all jobs in parallel for much faster results
-        async def generate_single_job(prompt, index):
-            try:
-                # Add timeout to prevent hanging requests
-                import asyncio
-                job_data = await asyncio.wait_for(
-                    job_service.generate_job_posting(prompt), 
-                    timeout=15.0  # 15 second timeout per job for faster results
-                )
-                if job_data and isinstance(job_data, dict):
-                    return job_data
-                else:
-                    logger.warning(f"Failed to generate job #{index+1}, skipping")
-                    return None
-            except asyncio.TimeoutError:
-                logger.error(f"Timeout generating job #{index+1}")
-                return None
-            except ValueError as e:
-                # Handle invalid prompt errors
-                logger.error(f"Invalid prompt for job #{index+1}: {str(e)}")
-                return None
-            except Exception as e:
-                logger.error(f"Error generating job #{index+1}: {str(e)}")
-                return None
-        
-        # Create tasks for parallel execution
-        tasks = [generate_single_job(prompt, i) for i, prompt in enumerate(varied_prompts)]
-        
-        # Execute all tasks in parallel
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Filter out None results and exceptions
-        bulk_jobs = [job for job in results if job is not None and not isinstance(job, Exception)]
-        
-        # Calculate execution time
-        end_time = time.time()
-        execution_time = round(end_time - start_time, 2)
-        
-        # Check if we got any valid jobs
-        if not bulk_jobs:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to generate any valid job postings"
-            )
-        
-        return BulkJobPostingResponse(
-            success=True,
-            data=bulk_jobs,
-            message=f"Successfully generated {len(bulk_jobs)} job postings in {execution_time} seconds",
-            time=execution_time,
-            jobCount=len(bulk_jobs)
-        )
-        
     except HTTPException:
         # Re-raise HTTP exceptions
         raise
@@ -259,6 +178,247 @@ async def bulk_job_generator(request: BulkJobPostingRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate bulk job postings: {str(e)}"
+        )
+
+async def _process_small_scale(request: BulkJobPostingRequest, start_time: float) -> BulkJobPostingResponse:
+    """Process small scale requests (1-20 jobs) synchronously."""
+    import asyncio
+    
+    # Initialize the job posting service
+    job_service = JobPostingService()
+    
+    # Create varied prompts
+    varied_prompts = _create_varied_prompts(request.prompt, request.count)
+    
+    # Check if the main prompt is valid
+    try:
+        test_job = await job_service.generate_job_posting(request.prompt)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    # Generate jobs with concurrency control
+    semaphore = asyncio.Semaphore(5)
+    
+    async def generate_single_job(prompt, index):
+        async with semaphore:
+            try:
+                job_data = await asyncio.wait_for(
+                    job_service.generate_job_posting(prompt), 
+                    timeout=8.0
+                )
+                return job_data if job_data and isinstance(job_data, dict) else None
+            except Exception as e:
+                logger.error(f"Error generating job #{index+1}: {str(e)}")
+                return None
+    
+    tasks = [generate_single_job(prompt, i) for i, prompt in enumerate(varied_prompts)]
+    
+    # Execute with timeout
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=60.0
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Request timed out. Please try with fewer jobs.")
+    
+    # Filter results
+    bulk_jobs = [job for job in results if job is not None and not isinstance(job, Exception)]
+    
+    if not bulk_jobs:
+        raise HTTPException(status_code=500, detail="Failed to generate any valid job postings.")
+    
+    execution_time = round(time.time() - start_time, 2)
+    success_rate = (len(bulk_jobs) / request.count) * 100
+    
+    return BulkJobPostingResponse(
+        success=True,
+        data=bulk_jobs,
+        message=f"Successfully generated {len(bulk_jobs)} out of {request.count} job postings in {execution_time} seconds",
+        time=execution_time,
+        jobCount=len(bulk_jobs)
+    )
+
+async def _process_medium_scale(request: BulkJobPostingRequest, start_time: float) -> BulkJobPostingResponse:
+    """Process medium scale requests (21-100 jobs) with extended timeout."""
+    import asyncio
+    
+    # Initialize the job posting service
+    job_service = JobPostingService()
+    
+    # Create varied prompts
+    varied_prompts = _create_varied_prompts(request.prompt, request.count)
+    
+    # Check if the main prompt is valid
+    try:
+        test_job = await job_service.generate_job_posting(request.prompt)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    # Process in smaller batches to avoid timeouts
+    batch_size = min(10, request.count)
+    semaphore = asyncio.Semaphore(3)  # Reduced concurrency for medium scale
+    
+    async def generate_single_job(prompt, index):
+        async with semaphore:
+            try:
+                job_data = await asyncio.wait_for(
+                    job_service.generate_job_posting(prompt), 
+                    timeout=10.0
+                )
+                return job_data if job_data and isinstance(job_data, dict) else None
+            except Exception as e:
+                logger.error(f"Error generating job #{index+1}: {str(e)}")
+                return None
+    
+    # Process in batches
+    all_results = []
+    for i in range(0, request.count, batch_size):
+        batch_prompts = varied_prompts[i:i + batch_size]
+        tasks = [generate_single_job(prompt, i + j) for j, prompt in enumerate(batch_prompts)]
+        
+        try:
+            batch_results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=120.0  # Extended timeout for medium scale
+            )
+            all_results.extend(batch_results)
+            
+            # Small delay between batches
+            if i + batch_size < request.count:
+                await asyncio.sleep(1)
+                
+        except asyncio.TimeoutError:
+            logger.warning(f"Batch {i//batch_size + 1} timed out, continuing with next batch")
+            continue
+    
+    # Filter results
+    bulk_jobs = [job for job in all_results if job is not None and not isinstance(job, Exception)]
+    
+    if not bulk_jobs:
+        raise HTTPException(status_code=500, detail="Failed to generate any valid job postings.")
+    
+    execution_time = round(time.time() - start_time, 2)
+    success_rate = (len(bulk_jobs) / request.count) * 100
+    
+    return BulkJobPostingResponse(
+        success=True,
+        data=bulk_jobs,
+        message=f"Successfully generated {len(bulk_jobs)} out of {request.count} job postings in {execution_time} seconds",
+        time=execution_time,
+        jobCount=len(bulk_jobs)
+    )
+
+async def _process_large_scale(request: BulkJobPostingRequest, start_time: float) -> BulkJobPostingResponse:
+    """Process large scale requests (100+ jobs) using background processing."""
+    # Start background job
+    job_id = await background_job_service.start_large_scale_generation(
+        prompt=request.prompt,
+        count=request.count,
+        batch_size=request.batch_size
+    )
+    
+    execution_time = round(time.time() - start_time, 2)
+    
+    # Return job_id for tracking instead of results
+    return BulkJobPostingResponse(
+        success=True,
+        data=[{"job_id": job_id, "status": "started", "message": "Large-scale generation started in background"}],
+        message=f"Started large-scale generation of {request.count} jobs. Use job_id '{job_id}' to track progress via /job-status/{job_id}",
+        time=execution_time,
+        jobCount=0  # Will be updated when job completes
+    )
+
+def _create_varied_prompts(prompt: str, count: int) -> list:
+    """Create varied prompts for job generation."""
+    prompt_lower = prompt.lower()
+    
+    if any(skill in prompt_lower for skill in ['java', 'python', 'javascript', 'react', 'angular', 'vue', 'node', 'frontend', 'backend', 'full stack', 'mobile', 'devops', 'data science', 'machine learning']):
+        skill_variations = [
+            "Junior", "Senior", "Lead", "Principal", "Architect", "Backend", "Frontend", 
+            "Full Stack", "Microservices", "Spring", "Enterprise", "Cloud", "DevOps", 
+            "API", "Database", "Security", "Performance", "Scalable", "Distributed"
+        ]
+    else:
+        skill_variations = [
+            "Software Developer", "Data Analyst", "Product Manager", "Marketing Specialist",
+            "Sales Representative", "HR Coordinator", "Financial Analyst", "UX Designer",
+            "DevOps Engineer", "Business Analyst", "Customer Success Manager", "Operations Manager",
+            "Frontend Developer", "Backend Developer", "Full Stack Developer", "Mobile Developer",
+            "Data Scientist", "Machine Learning Engineer", "Cloud Architect", "Security Engineer"
+        ]
+    
+    varied_prompts = []
+    for i in range(count):
+        if i < len(skill_variations):
+            varied_prompt = f"{prompt} - {skill_variations[i]}"
+        else:
+            varied_prompt = f"{prompt} - Level {i+1}"
+        varied_prompts.append(varied_prompt)
+    
+    return varied_prompts
+
+
+
+@router.get("/job-status/{job_id}", response_model=JobStatusResponse)
+async def get_job_status(job_id: str):
+    """
+    Get the status of a large-scale job generation.
+    
+    Args:
+        job_id: The job ID returned from large-scale generation
+        
+    Returns:
+        JobStatusResponse with current progress and results
+    """
+    try:
+        job_info = background_job_service.get_job_status(job_id)
+        
+        if not job_info:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Job {job_id} not found. It may have expired or never existed."
+            )
+        
+        # Calculate progress
+        total_count = job_info["total_count"]
+        completed_count = job_info["completed_count"]
+        failed_count = job_info["failed_count"]
+        progress_percentage = (completed_count / total_count) * 100 if total_count > 0 else 0
+        
+        # Estimate remaining time
+        if job_info["status"] == "started" and completed_count > 0:
+            elapsed_time = (datetime.now() - job_info["start_time"]).total_seconds()
+            rate = completed_count / elapsed_time if elapsed_time > 0 else 0
+            remaining_jobs = total_count - completed_count
+            estimated_remaining_minutes = int(remaining_jobs / rate / 60) if rate > 0 else 0
+        else:
+            estimated_remaining_minutes = 0
+        
+        # Get results if completed
+        results = []
+        if job_info["status"] == "completed":
+            results = job_info.get("results", [])
+        
+        return JobStatusResponse(
+            success=True,
+            job_id=job_id,
+            status=job_info["status"],
+            completed_count=completed_count,
+            total_count=total_count,
+            failed_count=failed_count,
+            progress_percentage=round(progress_percentage, 2),
+            estimated_remaining_minutes=estimated_remaining_minutes,
+            results=results
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting job status for {job_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get job status: {str(e)}"
         )
 
 @router.get("/health")
