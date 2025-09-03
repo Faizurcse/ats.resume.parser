@@ -1,8 +1,8 @@
 module.exports = {
   apps: [{
     name: 'AI_Ats_python_Backend',
-    script: '/root/my_project/backendPython/ats.resume.parser/venv/bin/gunicorn',
-    args: 'app.main:app -w 6 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120 --keep-alive 5 --max-requests 1000 --max-requests-jitter 100',
+    script: 'python',
+    args: '-m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 6',
     instances: 1,
     autorestart: true,
     watch: false,
