@@ -13,11 +13,14 @@ from app.config.settings import settings
 from app.controllers.resume_controller import router as resume_router
 from app.controllers.job_posting_controller import router as job_posting_router
 from app.controllers.download_resume_controller import router as download_resume_router
-from app.AI_SEARCH.controller import router as ai_search_router
+from app.controllers.job_post_embeddings_controller import router as job_post_embeddings_router
+from app.controllers.candidates_matching_external_controller import router as candidates_matching_router
+
+
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -31,6 +34,10 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json"
 )
+
+# Configure response size limits
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # Compress responses > 1KB
 
 # Add CORS middleware - must be added before other middleware
 app.add_middleware(
@@ -156,7 +163,7 @@ async def test_openai_api():
         
         # Try a simple API call
         test_response = openai_service.client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=settings.OPENAI_MODEL,
             messages=[{"role": "user", "content": "Hello, this is a test message"}],
             max_tokens=10
         )
@@ -166,7 +173,7 @@ async def test_openai_api():
             "message": "OpenAI API key is valid and working!",
             "api_key_set": True,
             "api_key_valid": True,
-            "model": "gpt-3.5-turbo",
+            "model": settings.OPENAI_MODEL,
             "test_response": test_response.choices[0].message.content,
             "timestamp": time.time()
         }
@@ -218,7 +225,14 @@ async def test_openai_api():
 app.include_router(resume_router)
 app.include_router(job_posting_router)
 app.include_router(download_resume_router)
-app.include_router(ai_search_router)
+app.include_router(job_post_embeddings_router)
+app.include_router(candidates_matching_router)
+
+
+
+
+
+
 
 
 
@@ -236,16 +250,30 @@ async def root():
         "version": settings.APP_VERSION,
         "description": settings.APP_DESCRIPTION,
         "endpoints": {
-            "health": "/api/v1/health",
+            "health": "/health",
+            "startup_status": "/startup-status",
             "parse_resume": "/api/v1/parse-resume",
+            "resume_embeddings_status": "/api/v1/resume-embeddings-status",
+            "generate_resume_embeddings": "/api/v1/generate-resume-embeddings",
             "generate_job_posting": "/api/v1/job-posting/generate",
             "all_resumes": "/api/v1/resumes",
             "download_unique_resumes": "/api/v1/download/resumes",
             "download_unique_resumes_with_files": "/api/v1/download/resumes/with-files",
             "download_all_resumes_admin": "/api/v1/download/resumes/all",
             "download_resume_file": "/api/v1/download/resume/{resume_id}",
-            "ai_search": "/ai-search/search",
-            "embedding_status": "/ai-search/embedding-status",
+
+            "job_post_embeddings": {
+                "start_embedding": "/job-post-embeddings/start-embedding",
+                "all_embeddings": "/job-post-embeddings/all-embeddings",
+                "summary": "/job-post-embeddings/summary",
+                "health": "/job-post-embeddings/health"
+            },
+            "candidates_matching": {
+                "hybrid_matching": "/api/v1/candidates-matching/job/{job_id}/candidates-external-hybrid",
+                "all_matches": "/api/v1/candidates-matching/all-matches",
+                "populate_locations": "/api/v1/candidates-matching/populate-job-locations",
+                "health": "/api/v1/candidates-matching/health"
+            },
             "test_cors": "/test-cors",
             "test_openai": "/test-openai",
             "docs": "/docs",
@@ -269,6 +297,25 @@ async def health_check():
         "version": settings.APP_VERSION,
         "timestamp": time.time()
     }
+
+# Startup status endpoint
+@app.get("/startup-status")
+async def get_startup_status():
+    """
+    Get comprehensive startup status information.
+    
+    Returns:
+        dict: Complete startup status report
+    """
+    try:
+        from app.services.startup_status_service import startup_status_service
+        return await startup_status_service.display_comprehensive_startup_status()
+    except Exception as e:
+        return {
+            "error": str(e),
+            "status": "failed",
+            "timestamp": time.time()
+        }
 
 # Global exception handler
 @app.exception_handler(Exception)
@@ -298,36 +345,25 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.on_event("startup")
 async def startup_event():
     """
-    Application startup event handler.
+    Application startup event handler with comprehensive status display.
     """
-    logger.info("🚀" + "="*50)
-    logger.info(f"🚀 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    logger.info(f"🔧 Debug mode: {settings.DEBUG}")
-    logger.info(f"📁 Max file size: {settings.MAX_FILE_SIZE} bytes")
-    logger.info(f"📄 Supported formats: {settings.ALLOWED_EXTENSIONS}")
-    logger.info("="*50)
-    
-    # Validate settings
     try:
-        settings.validate_settings()
-        logger.info("Settings validation passed")
+        # Import and use the comprehensive startup status service
+        from app.services.startup_status_service import startup_status_service
+        
+        # Display comprehensive startup status
+        await startup_status_service.display_comprehensive_startup_status()
+        
     except Exception as e:
-        logger.error(f"Settings validation failed: {str(e)}")
-        raise
-    
-    # Initialize database and ensure schema is up to date
-    try:
-        from app.services.database_service import DatabaseService
-        logger.info("🔌 Attempting to connect to database...")
-        db_service = DatabaseService()
-        await db_service._initialize()
-        logger.info("✅ Database schema validation completed successfully!")
-        logger.info("🚀 Database is ready and all tables are up to date!")
-        logger.info("🎉 Application startup completed successfully!")
-        logger.info("🌐 Server is ready to accept requests!")
-    except Exception as e:
-        logger.error(f"❌ Database schema validation failed: {str(e)}")
-        # Don't fail startup for database issues, but log them
+        logger.error(f"❌ Startup status display failed: {str(e)}")
+        # Fallback to basic startup message
+        logger.info("🚀" + "="*50)
+        logger.info(f"🚀 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+        logger.info(f"🔧 Debug mode: {settings.DEBUG}")
+        logger.info(f"📁 Max file size: {settings.MAX_FILE_SIZE} bytes")
+        logger.info(f"📄 Supported formats: {settings.ALLOWED_EXTENSIONS}")
+        logger.info("="*50)
+        logger.info("🌐 Server is starting...")
 
 # Shutdown event
 @app.on_event("shutdown")

@@ -21,25 +21,37 @@ class JobPostingService:
         logger.info("Job Posting service initialized")
     
     async def generate_job_posting(self, prompt: str) -> Dict[str, Any]:
-        """Generate job posting data from a prompt."""
+        """Generate job posting data from a prompt with security validation."""
         try:
-            # Analyze prompt type to determine generation strategy
-            if self._is_single_skill_search(prompt):
+            # Security Layer 1: Input validation and sanitization
+            prompt = self._sanitize_input(prompt)
+            
+            # Security Layer 2: Multi-layer security analysis for prompt type determination
+            prompt_type = self._analyze_prompt_security(prompt)
+            
+            if prompt_type == "non_job_related":
+                # Non-job related prompt - raise error instead of generating job
+                raise ValueError(f"Invalid prompt: '{prompt}' is not related to job postings. Please provide a job-related prompt.")
+            elif prompt_type == "single_skill":
                 # Single skill search (e.g., "java") - return specific job posting
                 system_prompt = self._get_single_skill_prompt()
                 logger.info(f"Using single skill prompt for: {prompt}")
-            elif self._is_generic_word_search(prompt):
-                # Generic word search - return n skills and 1000 char description
+            elif prompt_type == "specific_skill":
+                # Specific skill request (e.g., "java developer") - return skill-specific jobs
+                system_prompt = self._get_specific_skill_prompt(prompt)
+                logger.info(f"Using specific skill prompt for: {prompt}")
+            elif prompt_type == "generic_job":
+                # Generic job search - return diverse job postings
                 system_prompt = self._get_generic_word_prompt()
-                logger.info(f"Using generic word prompt for: {prompt}")
-            elif self._is_detailed_prompt(prompt):
+                logger.info(f"Using generic job prompt for: {prompt}")
+            elif prompt_type == "detailed_job":
                 # Detailed prompt - return comprehensive job posting
                 system_prompt = self._get_detailed_prompt()
                 logger.info(f"Using detailed prompt for: {prompt}")
             else:
-                # Simple prompt - return basic job posting
+                # Default fallback - return basic job posting (SECURE FALLBACK)
                 system_prompt = self._get_simple_prompt()
-                logger.info(f"Using simple prompt for: {prompt}")
+                logger.info(f"Using secure fallback prompt for: {prompt}")
             
             response = self.client.chat.completions.create(
                 model=settings.OPENAI_MODEL,
@@ -47,8 +59,8 @@ class JobPostingService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Generate job posting: {prompt}"}
                 ],
-                max_tokens=settings.OPENAI_MAX_TOKENS,
-                temperature=0.3,  # Lower temperature for more consistent JSON
+                max_tokens=800,  # Drastically reduced for much faster response
+                temperature=0.1,  # Very low temperature for fastest responses
                 response_format={"type": "json_object"}  # Force JSON response
             )
             
@@ -61,6 +73,10 @@ class JobPostingService:
             logger.info(f"Generated job posting with {len(job_data)} fields")
             return job_data
             
+        except ValueError as e:
+            # Re-raise ValueError (from sanitization or non-job-related prompts) as-is
+            logger.error(f"Validation error: {str(e)}")
+            raise e
         except Exception as e:
             logger.error(f"Error generating job posting: {str(e)}")
             raise Exception(f"Failed to generate job posting: {str(e)}")
@@ -99,9 +115,209 @@ class JobPostingService:
         
         return False
     
+    def _is_specific_skill_request(self, prompt: str) -> bool:
+        """Check if prompt contains specific skill requests like 'java developer'"""
+        clean_prompt = prompt.strip().lower()
+        
+        # Common programming languages and technologies
+        tech_skills = [
+            'java', 'python', 'javascript', 'react', 'angular', 'vue', 'node',
+            'sql', 'mongodb', 'aws', 'azure', 'docker', 'kubernetes', 'git',
+            'html', 'css', 'php', 'ruby', 'go', 'rust', 'swift', 'kotlin',
+            'c++', 'c#', 'dotnet', 'spring', 'django', 'flask', 'express',
+            'mysql', 'postgresql', 'redis', 'elasticsearch', 'kafka',
+            'jenkins', 'gitlab', 'jira', 'confluence', 'agile', 'scrum',
+            'frontend', 'backend', 'full stack', 'fullstack', 'mobile', 'devops',
+            'data science', 'machine learning', 'ai', 'artificial intelligence'
+        ]
+        
+        # Check if any tech skill is mentioned in the prompt
+        return any(skill in clean_prompt for skill in tech_skills)
+    
+    def _is_non_job_related_prompt(self, prompt: str) -> bool:
+        """Check if prompt is not job-related with comprehensive detection"""
+        clean_prompt = prompt.strip().lower()
+        
+        # First check if it's a job posting creation request with field specifications
+        if self._is_job_posting_with_fields(prompt):
+            return False  # Allow it even if it contains non-job keywords
+        
+        # Comprehensive non-job related keywords
+        non_job_keywords = [
+            # Celebrity Names (Indian & International)
+            'salman khan', 'shah rukh khan', 'amir khan', 'akshay kumar', 'hrithik roshan',
+            'deepika padukone', 'priyanka chopra', 'kareena kapoor', 'katrina kaif',
+            'tom cruise', 'leonardo dicaprio', 'brad pitt', 'angelina jolie', 'jennifer lawrence',
+            'robert downey jr', 'chris evans', 'scarlett johansson', 'chris hemsworth',
+            
+            # Sports & Games
+            'cricket', 'football', 'soccer', 'basketball', 'tennis', 'badminton',
+            'hockey', 'volleyball', 'baseball', 'golf', 'swimming', 'running',
+            'chess', 'poker', 'video games', 'gaming', 'esports', 'fifa', 'call of duty',
+            
+            # Entertainment & Media
+            'movie', 'film', 'bollywood', 'hollywood', 'music', 'song', 'dance',
+            'actor', 'actress', 'singer', 'dancer', 'director', 'producer',
+            'netflix', 'youtube', 'instagram', 'tiktok', 'facebook', 'twitter',
+            'comedy', 'drama', 'action', 'horror', 'romance', 'thriller',
+            
+            # Food & Drinks
+            'pizza', 'burger', 'pasta', 'rice', 'chicken', 'beef', 'vegetarian',
+            'restaurant', 'cooking', 'recipe', 'food', 'drink', 'coffee', 'tea',
+            'alcohol', 'beer', 'wine', 'whiskey', 'vodka', 'cocktail',
+            
+            # Nature & Weather
+            'weather', 'rain', 'sunny', 'cloudy', 'hot', 'cold', 'warm',
+            'mountain', 'ocean', 'river', 'forest', 'tree', 'flower', 'animal',
+            'dog', 'cat', 'bird', 'fish', 'lion', 'tiger', 'elephant',
+            
+            # Random & Common Words
+            'hello', 'hi', 'good morning', 'good evening', 'how are you',
+            'thank you', 'please', 'sorry', 'yes', 'no', 'maybe', 'okay',
+            'love', 'hate', 'happy', 'sad', 'angry', 'excited', 'bored',
+            
+            # Fantasy & Fiction
+            'unicorn', 'dragon', 'magic', 'wizard', 'fairy', 'superhero',
+            'spaceship', 'alien', 'robot', 'monster', 'ghost', 'vampire',
+            
+            # Academic & Scientific
+            'quantum physics', 'chemistry', 'biology', 'mathematics', 'history',
+            'geography', 'literature', 'philosophy', 'psychology', 'sociology',
+            
+            # Technology (Non-Job Related)
+            'iphone', 'android', 'smartphone', 'laptop', 'computer', 'internet',
+            'social media', 'streaming', 'podcast', 'blog', 'website',
+            
+            # Miscellaneous
+            'travel', 'vacation', 'holiday', 'party', 'wedding', 'birthday',
+            'shopping', 'fashion', 'beauty', 'fitness', 'gym', 'yoga',
+            'art', 'painting', 'drawing', 'sculpture', 'photography',
+            'book', 'novel', 'story', 'poetry', 'writing', 'reading'
+        ]
+        
+        # Check if prompt contains non-job related keywords
+        return any(keyword in clean_prompt for keyword in non_job_keywords)
+    
+    def _is_job_posting_with_fields(self, prompt: str) -> bool:
+        """Check if prompt is a job posting creation with field specifications"""
+        clean_prompt = prompt.strip().lower()
+        
+        # Job posting field indicators
+        field_indicators = [
+            'email:', 'spoc:', 'internalspoc:', 'recruiter:', 'company:', 'department:',
+            'jobtype:', 'job type:', 'experiencelevel:', 'experience level:', 'country:',
+            'city:', 'location:', 'worktype:', 'work type:', 'jobstatus:', 'job status:',
+            'salarymin:', 'salary min:', 'salarymax:', 'salary max:', 'priority:',
+            'description:', 'requirements:', 'requiredskills:', 'required skills:',
+            'benefits:', 'title:', 'jobtitle:', 'job title:'
+        ]
+        
+        # Check if prompt contains field specifications
+        return any(indicator in clean_prompt for indicator in field_indicators)
+    
+    def _is_job_related_prompt(self, prompt: str) -> bool:
+        """Check if prompt is job-related with comprehensive detection"""
+        clean_prompt = prompt.strip().lower()
+        
+        # Job-related keywords
+        job_keywords = [
+            # Job Titles
+            'developer', 'engineer', 'manager', 'analyst', 'designer', 'specialist',
+            'coordinator', 'assistant', 'director', 'lead', 'architect', 'consultant',
+            'administrator', 'supervisor', 'executive', 'officer', 'representative',
+            'technician', 'operator', 'clerk', 'secretary', 'receptionist',
+            
+            # Skills & Technologies
+            'java', 'python', 'javascript', 'react', 'angular', 'vue', 'node',
+            'sql', 'mongodb', 'aws', 'azure', 'docker', 'kubernetes', 'git',
+            'html', 'css', 'php', 'ruby', 'go', 'rust', 'swift', 'kotlin',
+            'spring', 'django', 'flask', 'express', 'mysql', 'postgresql',
+            
+            # Job Actions
+            'hire', 'recruit', 'employment', 'career', 'job', 'work', 'position',
+            'role', 'vacancy', 'opening', 'opportunity', 'candidate', 'resume',
+            'interview', 'salary', 'benefits', 'experience', 'qualification',
+            
+            # Industries
+            'software', 'technology', 'it', 'finance', 'banking', 'healthcare',
+            'education', 'marketing', 'sales', 'hr', 'human resources', 'legal',
+            'consulting', 'retail', 'manufacturing', 'construction', 'real estate',
+            
+            # Work Types
+            'full-time', 'part-time', 'contract', 'internship', 'remote', 'onsite',
+            'hybrid', 'freelance', 'temporary', 'permanent', 'entry-level', 'senior',
+            'junior', 'mid-level', 'executive', 'leadership', 'management'
+        ]
+        
+        # Check if prompt contains job-related keywords
+        return any(keyword in clean_prompt for keyword in job_keywords)
+    
+    def _analyze_prompt_security(self, prompt: str) -> str:
+        """Multi-layer security analysis to determine prompt type"""
+        clean_prompt = prompt.strip().lower()
+        
+        # Layer 1: Check for non-job related content (HIGHEST PRIORITY)
+        if self._is_non_job_related_prompt(prompt):
+            return "non_job_related"
+        
+        # Layer 2: Check for job-related content
+        if self._is_job_related_prompt(prompt):
+            # Layer 3: Determine specific job type
+            if self._is_single_skill_search(prompt):
+                return "single_skill"
+            elif self._is_specific_skill_request(prompt):
+                return "specific_skill"
+            elif self._is_detailed_prompt(prompt):
+                return "detailed_job"
+            else:
+                return "generic_job"
+        
+        # Layer 4: Check for generic job creation requests
+        if self._is_generic_word_search(prompt):
+            return "generic_job"
+        
+        # Layer 5: SECURE FALLBACK - Handle ANY unknown prompt
+        # This ensures 100% coverage for any prompt in the world
+        return "secure_fallback"
+    
+    def _sanitize_input(self, prompt: str) -> str:
+        """Sanitize and validate input prompt for security"""
+        if not prompt or not isinstance(prompt, str):
+            raise ValueError("Prompt is empty or invalid. Please provide a valid prompt.")
+        
+        # Remove potentially harmful characters and limit length
+        import re
+        
+        # Remove special characters that could cause issues
+        sanitized = re.sub(r'[<>"\'\`\\]', '', prompt)
+        
+        # Limit prompt length to prevent abuse
+        if len(sanitized) > 500:
+            sanitized = sanitized[:500]
+        
+        # Remove excessive whitespace
+        sanitized = ' '.join(sanitized.split())
+        
+        # If empty after sanitization, raise error
+        if not sanitized.strip():
+            raise ValueError("Prompt is empty or contains only whitespace. Please provide a valid prompt.")
+        
+        return sanitized.strip()
+    
     def _is_generic_word_search(self, prompt: str) -> bool:
         """Check if prompt is just generic words without specific job details"""
         clean_prompt = prompt.strip().lower()
+        
+        # Generic prompts that should generate diverse jobs
+        generic_phrases = [
+            'create job post', 'generate jobs', 'job posting', 'jobs', 
+            'create jobs', 'generate job postings', 'job posts', 'post jobs',
+            'create job', 'generate job', 'job', 'posting', 'posts'
+        ]
+        
+        # Check if it's a generic job creation request
+        if any(phrase in clean_prompt for phrase in generic_phrases):
+            return True
         
         # If it's just 1-3 generic words without job-specific context
         if len(clean_prompt.split()) <= 3:
@@ -181,90 +397,115 @@ CRITICAL RULES:
     
     def _get_single_skill_prompt(self) -> str:
         """Get system prompt for single skill search (e.g., 'java')."""
-        return """You are a job posting generator for single skill searches. 
-When given a single skill like "java", "python", etc., create a specific job posting for that role.
+        return """Create a complete job posting for the skill mentioned.
 
-Return JSON in this exact format:
-
+Return JSON with ALL fields:
 {
   "title": "[Skill] Developer",
-  "description": "Job description based on role",
-  "requirements": "Job requirements based on role", 
-  "requiredSkills": "Required skills based on role"
-}
+  "company": "[Company name]",
+  "department": "Engineering",
+  "internalSPOC": "[Name]",
+  "recruiter": "[Name]",
+  "email": "[email@company.com]",
+  "jobType": "Full-time",
+  "experienceLevel": "[Entry/Intermediate/Senior]",
+  "country": "[Country]",
+  "city": "[City]",
+  "fullLocation": "[City, State, Country]",
+  "workType": "[ONSITE/REMOTE/HYBRID]",
+  "jobStatus": "ACTIVE",
+  "salaryMin": "[Min salary]",
+  "salaryMax": "[Max salary]",
+  "priority": "High",
+  "description": "[100-150 word description]",
+  "requirements": "[100-150 word requirements]",
+  "requiredSkills": "[6-8 skills, comma-separated]",
+  "benefits": "[Benefits]"
+}"""
+    
+    def _get_specific_skill_prompt(self, prompt: str) -> str:
+        """Get system prompt for specific skill requests (e.g., 'java developer')."""
+        return f"""Create a job posting for: {prompt}
 
-CRITICAL RULES:
-1. For the title, use the skill name + "Developer" (e.g., "Java Developer", "Python Developer")
-2. Generate a realistic job description for that specific role
-3. Generate realistic requirements for that specific role
-4. Generate realistic required skills for that specific role
-5. Return ONLY valid JSON with no additional text
-6. Make the content specific to the skill mentioned (e.g., if "java", mention Java-specific technologies)"""
+Return JSON:
+{{
+  "title": "[Job title with skill]",
+  "company": "[Company name]",
+  "department": "Engineering",
+  "internalSPOC": "[Name]",
+  "recruiter": "[Name]",
+  "email": "[email@company.com]",
+  "jobType": "Full-time",
+  "experienceLevel": "[Entry/Intermediate/Senior]",
+  "country": "[Country]",
+  "city": "[City]",
+  "fullLocation": "[City, State, Country]",
+  "workType": "[ONSITE/REMOTE/HYBRID]",
+  "jobStatus": "ACTIVE",
+  "salaryMin": "[Min salary]",
+  "salaryMax": "[Max salary]",
+  "priority": "High",
+  "description": "[100-150 word description]",
+  "requirements": "[100-150 word requirements]",
+  "requiredSkills": "[6-8 skills, comma-separated]",
+  "benefits": "[Benefits]"
+}}"""
     
     def _get_generic_word_prompt(self) -> str:
         """Get system prompt for generic word searches."""
-        return """You are a job posting generator for generic word searches.
-When given generic words, generate a comprehensive job posting with multiple skills and detailed descriptions.
+        return """Create a job posting. Choose from: Software Developer, Data Analyst, Product Manager, Marketing Specialist, Sales Rep, HR Coordinator, Financial Analyst, UX Designer, DevOps Engineer, Business Analyst.
 
-Return JSON in this exact format:
-
+Return JSON:
 {
-  "title": "Software Developer",
-  "description": "[Generate a detailed job description with approximately 1000 characters]",
-  "requirements": "[Generate detailed job requirements with approximately 1000 characters]",
-  "requiredSkills": "[Generate 8-12 specific technical skills, separated by commas]"
-}
-
-CRITICAL RULES:
-1. Generate a detailed description with approximately 1000 characters
-2. Generate detailed requirements with approximately 1000 characters  
-3. Generate 8-12 specific technical skills, separated by commas
-4. Make the content comprehensive and professional
-5. Return ONLY valid JSON with no additional text
-6. Ensure the description and requirements are detailed enough to fill 1000 characters"""
+  "title": "[Job title]",
+  "company": "[Company name]",
+  "department": "[Department]",
+  "internalSPOC": "[Name]",
+  "recruiter": "[Name]",
+  "email": "[email@company.com]",
+  "jobType": "Full-time",
+  "experienceLevel": "[Entry/Intermediate/Senior]",
+  "country": "[Country]",
+  "city": "[City]",
+  "fullLocation": "[City, State, Country]",
+  "workType": "[ONSITE/REMOTE/HYBRID]",
+  "jobStatus": "ACTIVE",
+  "salaryMin": "[Min salary]",
+  "salaryMax": "[Max salary]",
+  "priority": "High",
+  "description": "[100-150 word description]",
+  "requirements": "[100-150 word requirements]",
+  "requiredSkills": "[6-8 skills, comma-separated]",
+  "benefits": "[Benefits]"
+}"""
     
     def _get_simple_prompt(self) -> str:
         """Get system prompt for simple job posting generation."""
-        return """You are a job posting generator. Create job postings in this exact JSON format.
+        return """Create a complete job posting.
 
-IMPORTANT: Extract ALL fields that are specified in the user's prompt using patterns like:
-- "company: [value]" -> extract company field
-- "department: [value]" -> extract department field
-- "jobTitle: [value]" -> extract title field
-- etc.
-
-Return JSON with ONLY the fields that are explicitly specified in the user's prompt:
-
+Return JSON with ALL fields:
 {
-  "title": "Job Title (from jobTitle: or title:)",
-  "company": "Company Name (from company:)",
-  "department": "Department Name (from department:)",
-  "internalSPOC": "Internal Point of Contact (from internalSPOC:)",
-  "recruiter": "Recruiter Name (from recruiter:)",
-  "email": "contact@company.com (from email:)",
-  "jobType": "Full-time/Part-time/Contract/Internship (from jobType:)",
-  "experienceLevel": "Entry/Intermediate/Senior/Executive (from experienceLevel:)",
-  "country": "Country (from country:)",
-  "city": "City (from city:)",
-  "fullLocation": "Full Location Description (from fullLocation:)",
-  "workType": "ONSITE/REMOTE/HYBRID (from workType:)",
-  "jobStatus": "ACTIVE/INACTIVE/CLOSED (from jobStatus:)",
-  "salaryMin": "Salary minimum (from salaryMin:)",
-  "salaryMax": "Salary maximum (from salaryMax:)",
-  "priority": "High/Medium/Low (from priority:)",
-  "description": "Job description based on role",
-  "requirements": "Job requirements based on role",
-  "requiredSkills": "Required skills based on role",
-  "benefits": "Company benefits (from benefits:)"
-}
-
-CRITICAL RULES:
-1. Extract ALL fields that are specified in the user's prompt
-2. Use the exact values provided after each field colon
-3. If a field is specified like "company: [value]", it MUST be included in the response
-4. Focus on the core job information: title, description, requirements, skills
-5. Return ONLY valid JSON with no additional text
-6. Pay special attention to field specifications with colons (e.g., "company: [value]")"""
+  "title": "[Job title]",
+  "company": "[Company name]",
+  "department": "[Department]",
+  "internalSPOC": "[Name]",
+  "recruiter": "[Name]",
+  "email": "[email@company.com]",
+  "jobType": "Full-time",
+  "experienceLevel": "[Entry/Intermediate/Senior]",
+  "country": "[Country]",
+  "city": "[City]",
+  "fullLocation": "[City, State, Country]",
+  "workType": "[ONSITE/REMOTE/HYBRID]",
+  "jobStatus": "ACTIVE",
+  "salaryMin": "[Min salary]",
+  "salaryMax": "[Max salary]",
+  "priority": "High",
+  "description": "[100-150 word description]",
+  "requirements": "[100-150 word requirements]",
+  "requiredSkills": "[6-8 skills, comma-separated]",
+  "benefits": "[Benefits]"
+}"""
     
     def _parse_and_clean_response(self, response: str) -> Dict[str, Any]:
         """Parse and clean the OpenAI response to extract valid JSON."""
@@ -348,7 +589,23 @@ CRITICAL RULES:
         """Create a fallback job posting structure if parsing fails."""
         return {
             "title": "Software Developer",
-            "description": "We are seeking a talented software developer to join our dynamic team. The ideal candidate will have strong programming skills, experience with modern development practices, and a passion for creating high-quality software solutions. You will work on exciting projects, collaborate with cross-functional teams, and contribute to the development of innovative applications that drive business value.",
-            "requirements": "Bachelor's degree in Computer Science, Software Engineering, or related field. Minimum 3+ years of experience in software development. Proficiency in multiple programming languages (Java, Python, JavaScript, etc.). Experience with modern frameworks and technologies. Strong problem-solving skills and attention to detail. Excellent communication and teamwork abilities. Experience with version control systems (Git) and agile development methodologies. Knowledge of database design and SQL. Understanding of software testing principles and practices.",
-            "requiredSkills": "Java, Python, JavaScript, React, Node.js, SQL, Git, Docker, AWS, REST APIs, Agile, Testing"
+            "company": "Tech Solutions Inc.",
+            "department": "Engineering",
+            "internalSPOC": "John Smith",
+            "recruiter": "Jane Doe",
+            "email": "jane.doe@techsolutions.com",
+            "jobType": "Full-time",
+            "experienceLevel": "Intermediate",
+            "country": "United States",
+            "city": "San Francisco",
+            "fullLocation": "San Francisco, CA, United States",
+            "workType": "HYBRID",
+            "jobStatus": "ACTIVE",
+            "salaryMin": "80000",
+            "salaryMax": "120000",
+            "priority": "High",
+            "description": "We are seeking a talented software developer to join our dynamic team. The ideal candidate will have strong programming skills, experience with modern development practices, and a passion for creating high-quality software solutions.",
+            "requirements": "Bachelor's degree in Computer Science or related field. Minimum 3+ years of experience in software development. Proficiency in programming languages like Java, Python, or JavaScript. Experience with modern frameworks and technologies. Strong problem-solving skills and attention to detail.",
+            "requiredSkills": "Java, Python, JavaScript, React, Node.js, SQL, Git, Docker, AWS, REST APIs",
+            "benefits": "Competitive salary, health insurance, 401(k) plan, flexible work hours, professional development opportunities"
         }

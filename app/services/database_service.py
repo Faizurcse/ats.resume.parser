@@ -6,10 +6,10 @@ Uses asyncpg for direct PostgreSQL connection.
 import logging
 import json
 import os
+import asyncio
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import asyncpg
-from urllib.parse import urlparse
 
 from app.config.settings import settings
 
@@ -19,54 +19,111 @@ logger = logging.getLogger(__name__)
 class DatabaseService:
     """Service for database operations using asyncpg."""
     
+    _instance = None
+    _lock = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(DatabaseService, cls).__new__(cls)
+            cls._instance.pool = None
+            cls._instance._init_done = False
+            cls._instance._init_lock = asyncio.Lock()
+        return cls._instance
+    
     def __init__(self):
         """Initialize database connection."""
-        self.pool = None
-        self._init_done = False
+        if not hasattr(self, '_initialized'):
+            self.pool = None
+            self._init_done = False
+            self._initialized = True
+            if not hasattr(self, '_init_lock'):
+                self._init_lock = asyncio.Lock()
     
     async def _get_pool(self):
         """Get database connection pool."""
         if not self._init_done:
+            async with self._init_lock:
+                if not self._init_done:  # Double-check after acquiring lock
+                    await self._initialize()
+        
+        if self.pool is None:
+            raise Exception("Database connection pool is not initialized")
+        
+        # Test if pool is still valid
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute('SELECT 1')
+        except Exception as e:
+            logger.warning(f"Database pool test failed, reinitializing: {str(e)}")
+            self._init_done = False
             await self._initialize()
+        
         return self.pool
     
     async def _initialize(self):
-        """Initialize database connection pool and create tables."""
+        """Initialize database connection pool and connect to existing database."""
         try:
-            # Parse database URL
-            parsed_url = urlparse(settings.DATABASE_URL)
+            # Use DATABASE_URL from environment or fallback to hardcoded values
+            database_url = settings.DATABASE_URL
             
-            # Extract connection parameters
-            host = parsed_url.hostname
-            port = parsed_url.port or 5432
-            user = parsed_url.username
-            password = parsed_url.password
-            database = parsed_url.path.lstrip('/')
-            
-            # Create connection pool
-            self.pool = await asyncpg.create_pool(
-                host=host,
-                port=port,
-                user=user,
-                password=password,
-                database=database,
-                ssl='require'
-            )
+            if database_url:
+                # Parse DATABASE_URL
+                logger.info("🔗 Using DATABASE_URL from environment variables")
+                self.pool = await asyncpg.create_pool(
+                    database_url,
+                    min_size=2,  # Increased minimum connections
+                    max_size=20,  # Increased maximum connections
+                    command_timeout=60,  # Increased timeout
+                    server_settings={
+                        'application_name': 'resume_parser_python'
+                    }
+                )
+            else:
+                # Fallback to hardcoded connection parameters
+                logger.info("⚠️  DATABASE_URL not set, using hardcoded database connection")
+                host = "147.93.155.233"
+                port = 5432
+                user = "root"
+                password = "Ai_ats@2000"
+                database = "ai_ats"
+                
+                self.pool = await asyncpg.create_pool(
+                    host=host,
+                    port=port,
+                    user=user,
+                    password=password,
+                    database=database,
+                    ssl=False,
+                    min_size=2,  # Increased minimum connections
+                    max_size=20,  # Increased maximum connections
+                    command_timeout=60,  # Increased timeout
+                    server_settings={
+                        'application_name': 'resume_parser_python'
+                    }
+                )
             
             # Test the connection
             async with self.pool.acquire() as conn:
                 await conn.execute('SELECT 1')
                 logger.info("✅ Database connection established successfully!")
-                logger.info(f"📊 Connected to database: {database} on {host}:{port}")
+                if database_url:
+                    logger.info(f"📊 Connected using DATABASE_URL")
+                else:
+                    logger.info(f"📊 Connected to database: {database} on {host}:{port}")
             
-            # Create tables
-            await self._create_tables()
+            # Skip table creation - we're connecting to existing database with existing tables
+            logger.info("📊 Connecting to existing database - using existing tables from Node.js backend")
             
             self._init_done = True
             logger.info("🎉 Database service initialized successfully")
             
         except Exception as e:
             logger.error(f"Database initialization failed: {str(e)}")
+            if database_url:
+                logger.error(f"Connection details: Using DATABASE_URL")
+            else:
+                logger.error(f"Connection details: {host}:{port}/{database}")
+            logger.error("Please check if the database server is accessible")
             raise
     
     async def _create_tables(self):
@@ -101,26 +158,7 @@ class DatabaseService:
             ''')
             logger.info("📋 Resume data table ready")
             
-            # Create embeddings table for vector storage
-            try:
-                await conn.execute('''
-                    CREATE TABLE IF NOT EXISTS resume_embeddings (
-                        id SERIAL PRIMARY KEY,
-                        resume_id INTEGER NOT NULL REFERENCES resume_data(id) ON DELETE CASCADE,
-                        embedding JSONB NOT NULL,
-                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                        UNIQUE(resume_id)
-                    )
-                ''')
-                logger.info("🔍 Resume embeddings table ready")
-                
-                # Create index on resume_id for faster lookups
-                await conn.execute('CREATE INDEX IF NOT EXISTS idx_resume_embeddings_resume_id ON resume_embeddings(resume_id)')
-                
-            except Exception as e:
-                logger.warning(f"Could not create embeddings table: {str(e)}")
-                # Continue execution even if embeddings table creation fails
+
             
             # Add missing columns if they don't exist (for existing tables)
             await self._add_missing_columns(conn)
@@ -133,6 +171,8 @@ class DatabaseService:
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_resume_data_candidate_name ON resume_data(candidate_name)')
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_resume_data_candidate_email ON resume_data(candidate_email)')
             await conn.execute('CREATE INDEX IF NOT EXISTS idx_resume_data_is_unique ON resume_data(is_unique)')
+            
+
             
             # No unique constraint - allow multiple resumes per email
             # Create regular index for performance
@@ -464,6 +504,9 @@ class DatabaseService:
         """
         try:
             pool = await self._get_pool()
+            if pool is None:
+                logger.error("Database pool is None in get_all_resumes")
+                return []
             
             async with pool.acquire() as conn:
                 # First, check what columns exist in the table
@@ -515,6 +558,68 @@ class DatabaseService:
             logger.error(f"Error getting resumes: {str(e)}")
             logger.error(f"Full error details: {e.__class__.__name__}: {str(e)}")
             raise Exception(f"Failed to get resume data: {str(e)}")
+
+    async def get_all_resumes_with_embeddings(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Get all resume records with embeddings for semantic matching.
+        
+        Args:
+            limit (int): Number of records to return
+            offset (int): Number of records to skip
+            
+        Returns:
+            List[Dict[str, Any]]: List of resume records with embeddings
+        """
+        try:
+            pool = await self._get_pool()
+            
+            async with pool.acquire() as conn:
+                # Get all resumes and filter those with embeddings in parsed_data
+                query = '''
+                    SELECT id, filename, file_path, file_type, candidate_name, candidate_email, 
+                           total_experience, parsed_data, created_at
+                    FROM resume_data 
+                    ORDER BY created_at DESC
+                    LIMIT $1 OFFSET $2
+                '''
+                
+                records = await conn.fetch(query, limit, offset)
+                
+                resumes_with_embeddings = []
+                
+                for record in records:
+                    parsed_data = record.get('parsed_data', {})
+                    
+                    # Handle parsed_data that might be a JSON string
+                    if isinstance(parsed_data, str):
+                        try:
+                            parsed_data = json.loads(parsed_data)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                    
+                    # Check if resume has embedding data
+                    if parsed_data and 'embedding' in parsed_data and parsed_data['embedding']:
+                        embedding_data = parsed_data['embedding']
+                        if isinstance(embedding_data, list) and len(embedding_data) > 0:
+                            resumes_with_embeddings.append({
+                                "id": record['id'],
+                                "filename": record['filename'],
+                                "file_path": record.get('file_path', ''),
+                                "file_type": record['file_type'],
+                                "candidate_name": record['candidate_name'],
+                                "candidate_email": record['candidate_email'],
+                                "total_experience": record['total_experience'],
+                                "parsed_data": record['parsed_data'],
+                                "embedding": embedding_data,
+                                "created_at": record['created_at'].isoformat() if record['created_at'] else None
+                            })
+                
+                return resumes_with_embeddings
+                
+        except Exception as e:
+            logger.error(f"Error getting resumes with embeddings: {str(e)}")
+            logger.error(f"Full error details: {e.__class__.__name__}: {str(e)}")
+            raise Exception(f"Failed to get resume data with embeddings: {str(e)}")
     
     async def search_resumes(self, search_term: str) -> List[Dict[str, Any]]:
         """
@@ -703,3 +808,544 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Error getting all resumes including duplicates: {str(e)}")
             raise Exception(f"Failed to get all resume data: {str(e)}")
+
+    # Job Post Embedding Methods
+    async def get_total_job_count(self) -> int:
+        """Get the total count of all jobs in the system."""
+        try:
+            pool = await self._get_pool()
+            if pool is None:
+                logger.error("Database pool is None in get_total_job_count")
+                return 0
+            async with pool.acquire() as conn:
+                result = await conn.fetchval('SELECT COUNT(*) FROM "Ats_JobPost"')
+                return result or 0
+        except Exception as e:
+            logger.error(f"Error getting total job count: {str(e)}")
+            return 0
+
+    async def get_jobs_with_embeddings_count(self) -> int:
+        """Get the count of jobs that have embeddings."""
+        try:
+            pool = await self._get_pool()
+            if pool is None:
+                logger.error("Database pool is None in get_jobs_with_embeddings_count")
+                return 0
+            async with pool.acquire() as conn:
+                result = await conn.fetchval('''
+                    SELECT COUNT(*) FROM "Ats_JobPost" 
+                    WHERE embedding IS NOT NULL AND embedding != 'null' AND jsonb_array_length(embedding) > 0
+                ''')
+                return result or 0
+        except Exception as e:
+            logger.error(f"Error getting jobs with embeddings count: {str(e)}")
+            return 0
+
+    async def get_all_jobs(self) -> List[Dict[str, Any]]:
+        """Get all jobs from the database."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                records = await conn.fetch('''
+                    SELECT id, title, company, department, description, requirements, 
+                           "requiredSkills", benefits, country, city, "fullLocation", "jobType", 
+                           "experienceLevel", "workType", "salaryMin", "salaryMax", embedding, 
+                           "createdAt" as created_at
+                    FROM "Ats_JobPost"
+                    ORDER BY "createdAt" DESC
+                ''')
+                
+                return [
+                    {
+                        "id": record['id'],
+                        "title": record.get('title', ''),
+                        "company": record.get('company', ''),
+                        "department": record.get('department', ''),
+                        "description": record.get('description', ''),
+                        "requirements": record.get('requirements', ''),
+                        "requiredSkills": record.get('requiredSkills', ''),
+                        "benefits": record.get('benefits', ''),
+                        "country": record.get('country', ''),
+                        "city": record.get('city', ''),
+                        "fullLocation": record.get('fullLocation', ''),
+                        "jobType": record.get('jobType', ''),
+                        "experienceLevel": record.get('experienceLevel', ''),
+                        "workType": record.get('workType', ''),
+                        "salaryMin": record.get('salaryMin', 0),
+                        "salaryMax": record.get('salaryMax', 0),
+                        "embedding": json.loads(record.get('embedding', '[]')) if record.get('embedding') else [],
+                        "created_at": record.get('created_at', ''),
+                        "updated_at": record.get('created_at', '')
+                    }
+                    for record in records
+                ]
+        except Exception as e:
+            logger.error(f"Error getting all jobs: {str(e)}")
+            return []
+
+    async def update_job_location(self, job_id: int, city: str, country: str) -> bool:
+        """Update job location with city and country."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute('''
+                    UPDATE "Ats_JobPost" 
+                    SET city = $1, country = $2
+                    WHERE id = $3
+                ''', city, country, job_id)
+                return True
+        except Exception as e:
+            logger.error(f"Error updating job location: {str(e)}")
+            return False
+
+    async def update_job_full_location(self, job_id: int, full_location: str) -> bool:
+        """Update job fullLocation field."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute('''
+                    UPDATE "Ats_JobPost" 
+                    SET "fullLocation" = $1
+                    WHERE id = $2
+                ''', full_location, job_id)
+                return True
+        except Exception as e:
+            logger.error(f"Error updating job fullLocation: {str(e)}")
+            return False
+
+    async def populate_missing_full_locations(self) -> int:
+        """Populate fullLocation field for jobs that have city/country but empty fullLocation."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                # Find jobs with city/country but empty fullLocation
+                records = await conn.fetch('''
+                    SELECT id, city, country, "fullLocation"
+                    FROM "Ats_JobPost" 
+                    WHERE ("fullLocation" IS NULL OR "fullLocation" = '' OR "fullLocation" = 'Location not specified')
+                    AND (city IS NOT NULL AND city != '' OR country IS NOT NULL AND country != '')
+                ''')
+                
+                updated_count = 0
+                for record in records:
+                    job_id = record['id']
+                    city = record.get('city', '')
+                    country = record.get('country', '')
+                    
+                    # Create fullLocation from city and country
+                    if city and country:
+                        full_location = f"{city}, {country}"
+                    elif city:
+                        full_location = city
+                    elif country:
+                        full_location = country
+                    else:
+                        continue
+                    
+                    # Update the job
+                    await conn.execute('''
+                        UPDATE "Ats_JobPost" 
+                        SET "fullLocation" = $1
+                        WHERE id = $2
+                    ''', full_location, job_id)
+                    updated_count += 1
+                
+                logger.info(f"Updated {updated_count} jobs with missing fullLocation")
+                return updated_count
+                
+        except Exception as e:
+            logger.error(f"Error populating missing full locations: {str(e)}")
+            return 0
+
+# REMOVED: create_job_post function - using Node.js backend for job creation
+
+    async def get_jobs_without_embeddings(self) -> List[Dict[str, Any]]:
+        """Get all jobs that don't have embeddings."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                records = await conn.fetch('''
+                    SELECT id, title, company, department, description, requirements, 
+                           "requiredSkills", benefits, country, city, "fullLocation", "jobType", 
+                           "experienceLevel", "workType", "salaryMin", "salaryMax", embedding, 
+                           "createdAt" as created_at
+                    FROM "Ats_JobPost" 
+                    WHERE embedding IS NULL OR embedding = 'null' OR embedding = '[]' OR jsonb_array_length(embedding) = 0
+                    ORDER BY "createdAt" DESC
+                ''')
+                
+                return [
+                    {
+                        "id": record['id'],
+                        "title": record.get('title', ''),
+                        "company": record.get('company', ''),
+                        "department": record.get('department', ''),
+                        "description": record.get('description', ''),
+                        "requirements": record.get('requirements', ''),
+                        "requiredSkills": record.get('requiredSkills', ''),
+                        "benefits": record.get('benefits', ''),
+                        "country": record.get('country', ''),
+                        "city": record.get('city', ''),
+                        "fullLocation": record.get('fullLocation', ''),
+                        "jobType": record.get('jobType', ''),
+                        "experienceLevel": record.get('experienceLevel', ''),
+                        "workType": record.get('workType', ''),
+                        "salaryMin": record.get('salaryMin', 0),
+                        "salaryMax": record.get('salaryMax', 0),
+                        "embedding": json.loads(record.get('embedding', '[]')) if record.get('embedding') else [],
+                        "created_at": record.get('created_at', ''),
+                        "updated_at": record.get('created_at', '')
+                    }
+                    for record in records
+                ]
+        except Exception as e:
+            logger.error(f"Error getting jobs without embeddings: {str(e)}")
+            return []
+
+    async def get_all_jobs_with_embeddings(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get all jobs that have embeddings with detailed information."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                records = await conn.fetch('''
+                    SELECT id, title, company, department, description, requirements, 
+                           "requiredSkills", benefits, country, city, "fullLocation", "jobType", 
+                           "experienceLevel", "workType", "salaryMin", "salaryMax", embedding, 
+                           "createdAt" as created_at
+                    FROM "Ats_JobPost" 
+                    WHERE embedding IS NOT NULL AND embedding != 'null' AND jsonb_array_length(embedding) > 0
+                    ORDER BY "createdAt" DESC
+                    LIMIT $1
+                ''', limit)
+                
+                return [
+                    {
+                        "id": record['id'],
+                        "title": record.get('title', ''),
+                        "company": record.get('company', ''),
+                        "department": record.get('department', ''),
+                        "description": record.get('description', ''),
+                        "requirements": record.get('requirements', ''),
+                        "requiredSkills": record.get('requiredSkills', ''),
+                        "benefits": record.get('benefits', ''),
+                        "country": record.get('country', ''),
+                        "city": record.get('city', ''),
+                        "fullLocation": record.get('fullLocation', ''),
+                        "jobType": record.get('jobType', ''),
+                        "experienceLevel": record.get('experienceLevel', ''),
+                        "workType": record.get('workType', ''),
+                        "salaryMin": record.get('salaryMin', 0),
+                        "salaryMax": record.get('salaryMax', 0),
+                        "embedding": json.loads(record.get('embedding', '[]')) if record.get('embedding') else [],
+                        "created_at": record.get('created_at', ''),
+                        "updated_at": record.get('created_at', '')
+                    }
+                    for record in records
+                ]
+        except Exception as e:
+            logger.error(f"Error getting all jobs with embeddings: {str(e)}")
+            return []
+
+    async def get_job_by_id(self, job_id: int) -> Optional[Dict[str, Any]]:
+        """Get a specific job by ID from the database."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                record = await conn.fetchrow('''
+                    SELECT id, title, company, department, description, requirements, 
+                           "requiredSkills", benefits, country, city, "fullLocation", "jobType", 
+                           "experienceLevel", "workType", "salaryMin", "salaryMax", embedding, 
+                           "createdAt" as created_at
+                    FROM "Ats_JobPost" 
+                    WHERE id = $1
+                ''', job_id)
+                
+                if not record:
+                    return None
+                
+                return {
+                    "id": record['id'],
+                    "title": record.get('title', ''),
+                    "company": record.get('company', ''),
+                    "department": record.get('department', ''),
+                    "description": record.get('description', ''),
+                    "requirements": record.get('requirements', ''),
+                    "requiredSkills": record.get('requiredSkills', ''),
+                    "benefits": record.get('benefits', ''),
+                    "country": record.get('country', ''),
+                    "city": record.get('city', ''),
+                    "fullLocation": record.get('fullLocation', ''),
+                    "jobType": record.get('jobType', ''),
+                    "experienceLevel": record.get('experienceLevel', ''),
+                    "workType": record.get('workType', ''),
+                    "salaryMin": record.get('salaryMin', 0),
+                    "salaryMax": record.get('salaryMax', 0),
+                    "embedding": json.loads(record.get('embedding', '[]')) if record.get('embedding') else [],
+                    "created_at": record.get('created_at', ''),
+                    "updated_at": record.get('created_at', '')
+                }
+                
+        except Exception as e:
+            logger.error(f"Error getting job by ID {job_id}: {str(e)}")
+            return None
+
+    async def update_job_embedding(self, job_id: int, embedding: List[float]) -> bool:
+        """Update the embedding column in the job table for a specific job."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                result = await conn.execute('''
+                    UPDATE "Ats_JobPost" 
+                    SET embedding = $1 
+                    WHERE id = $2
+                ''', json.dumps(embedding), job_id)
+                
+                if result == "UPDATE 1":
+                    logger.info(f"Job embedding updated successfully for job ID: {job_id}")
+                    return True
+                else:
+                    logger.warning(f"Job with ID {job_id} not found for embedding update")
+                    return False
+        except Exception as e:
+            logger.error(f"Error updating job embedding for job {job_id}: {str(e)}")
+            raise Exception(f"Failed to update job embedding: {str(e)}")
+
+    async def update_resume_embedding(self, resume_id: int, parsed_data: Dict[str, Any]) -> bool:
+        """Update the parsed_data column in the resume table with new embedding."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                result = await conn.execute('''
+                    UPDATE resume_data 
+                    SET parsed_data = $1 
+                    WHERE id = $2
+                ''', json.dumps(parsed_data), resume_id)
+                
+                if result == "UPDATE 1":
+                    logger.info(f"Resume embedding updated successfully for resume ID: {resume_id}")
+                    return True
+                else:
+                    logger.warning(f"Resume with ID {resume_id} not found for embedding update")
+                    return False
+        except Exception as e:
+            logger.error(f"Error updating resume embedding for resume {resume_id}: {str(e)}")
+            raise Exception(f"Failed to update resume embedding: {str(e)}")
+
+
+
+
+
+    async def get_jobs_with_embeddings_count(self) -> int:
+        """
+        Get the count of jobs that have embeddings.
+        
+        Returns:
+            int: Number of jobs with embeddings
+        """
+        try:
+            pool = await self._get_pool()
+            
+            async with pool.acquire() as conn:
+                result = await conn.fetchval('''
+                    SELECT COUNT(*) FROM "Ats_JobPost" 
+                    WHERE embedding IS NOT NULL AND embedding != 'null' AND jsonb_array_length(embedding) > 0
+                ''')
+                
+                return result or 0
+                
+        except Exception as e:
+            logger.error(f"Error getting jobs with embeddings count: {str(e)}")
+            return 0
+
+    async def get_all_jobs_with_embeddings(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Get all jobs that have embeddings with detailed information.
+        
+        Args:
+            limit: Maximum number of jobs to display (default: 50)
+            
+        Returns:
+            List[Dict[str, Any]]: List of jobs with embeddings
+        """
+        try:
+            pool = await self._get_pool()
+            
+            async with pool.acquire() as conn:
+                records = await conn.fetch('''
+                    SELECT id, title, company, department, description, requirements, 
+                           "requiredSkills", benefits, country, city, "jobType", 
+                           "experienceLevel", "workType", embedding, 
+                           "createdAt" as created_at
+                    FROM "Ats_JobPost" 
+                    WHERE embedding IS NOT NULL AND embedding != 'null' AND jsonb_array_length(embedding) > 0
+                    ORDER BY "createdAt" DESC
+                    LIMIT $1
+                ''', limit)
+                
+                return [
+                    {
+                        "id": record['id'],
+                        "title": record.get('title', ''),
+                        "company": record.get('company', ''),
+                        "department": record.get('department', ''),
+                        "description": record.get('description', ''),
+                        "requirements": record.get('requirements', ''),
+                        "requiredSkills": record.get('requiredSkills', ''),
+                        "benefits": record.get('benefits', ''),
+                        "country": record.get('country', ''),
+                        "city": record.get('city', ''),
+                        "jobType": record.get('jobType', ''),
+                        "experienceLevel": record.get('experienceLevel', ''),
+                        "workType": record.get('workType', ''),
+                        "embedding": json.loads(record.get('embedding', '[]')) if record.get('embedding') else [],
+                        "created_at": record.get('created_at', ''),
+                        "updated_at": record.get('created_at', '')  # Use createdAt for both since updatedAt doesn't exist
+                    }
+                    for record in records
+                ]
+                
+        except Exception as e:
+            logger.error(f"Error getting all jobs with embeddings: {str(e)}")
+            return []
+
+    async def get_job_with_embedding(self, job_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific job with its embedding data.
+        
+        Args:
+            job_id: ID of the job to retrieve
+            
+        Returns:
+            Optional[Dict[str, Any]]: Job data with embedding or None if not found
+        """
+        try:
+            pool = await self._get_pool()
+            
+            async with pool.acquire() as conn:
+                record = await conn.fetchrow('''
+                    SELECT id, title, company, department, description, requirements, 
+                           "requiredSkills", benefits, country, city, "jobType", 
+                           "experienceLevel", "workType", embedding, 
+                           "createdAt" as created_at
+                    FROM "Ats_JobPost" 
+                    WHERE id = $1 AND embedding IS NOT NULL AND embedding != 'null' AND jsonb_array_length(embedding) > 0
+                ''', job_id)
+                
+                if not record:
+                    return None
+                
+                return {
+                    "id": record['id'],
+                    "title": record.get('title', ''),
+                    "company": record.get('company', ''),
+                    "department": record.get('department', ''),
+                    "description": record.get('description', ''),
+                    "requirements": record.get('requirements', ''),
+                    "requiredSkills": record.get('requiredSkills', ''),
+                    "benefits": record.get('benefits', ''),
+                    "country": record.get('country', ''),
+                    "city": record.get('city', ''),
+                    "jobType": record.get('jobType', ''),
+                    "experienceLevel": record.get('experienceLevel', ''),
+                    "workType": record.get('workType', ''),
+                    "embedding": json.loads(record.get('embedding', '[]')) if record.get('embedding') else [],
+                    "created_at": record.get('created_at', ''),
+                    "updated_at": record.get('created_at', '')  # Use createdAt for both since updatedAt doesn't exist
+                }
+                
+        except Exception as e:
+            logger.error(f"Error getting job with embedding {job_id}: {str(e)}")
+            return None
+
+    async def get_all_jobs(self) -> List[Dict[str, Any]]:
+        """
+        Get all jobs from the database.
+        
+        Returns:
+            List[Dict[str, Any]]: List of all jobs
+        """
+        try:
+            pool = await self._get_pool()
+            
+            async with pool.acquire() as conn:
+                records = await conn.fetch('''
+                    SELECT id, title, company, department, description, requirements, 
+                           "requiredSkills", benefits, country, city, "jobType", 
+                           "experienceLevel", "workType", embedding, 
+                           "createdAt" as created_at
+                    FROM "Ats_JobPost"
+                    ORDER BY "createdAt" DESC
+                ''')
+                
+                return [
+                    {
+                        "id": record['id'],
+                        "title": record.get('title', ''),
+                        "company": record.get('company', ''),
+                        "department": record.get('department', ''),
+                        "description": record.get('description', ''),
+                        "requirements": record.get('requirements', ''),
+                        "requiredSkills": record.get('requiredSkills', ''),
+                        "benefits": record.get('benefits', ''),
+                        "country": record.get('country', ''),
+                        "city": record.get('city', ''),
+                        "jobType": record.get('jobType', ''),
+                        "experienceLevel": record.get('experienceLevel', ''),
+                        "workType": record.get('workType', ''),
+                        "embedding": json.loads(record.get('embedding', '[]')) if record.get('embedding') else [],
+                        "created_at": record.get('created_at', ''),
+                        "updated_at": record.get('created_at', '')  # Use createdAt for both since updatedAt doesn't exist
+                    }
+                    for record in records
+                ]
+                
+        except Exception as e:
+            logger.error(f"Error getting all jobs: {str(e)}")
+            return []
+
+    async def get_jobs_without_embeddings(self) -> List[Dict[str, Any]]:
+        """
+        Get all jobs that don't have embeddings.
+        
+        Returns:
+            List[Dict[str, Any]]: List of jobs without embeddings
+        """
+        try:
+            pool = await self._get_pool()
+            
+            async with pool.acquire() as conn:
+                records = await conn.fetch('''
+                    SELECT id, title, company, department, description, requirements, 
+                           "requiredSkills", benefits, country, city, "jobType", 
+                           "experienceLevel", "workType", embedding, 
+                           "createdAt" as created_at
+                    FROM "Ats_JobPost" 
+                    WHERE embedding IS NULL OR embedding = 'null' OR embedding = '[]' OR jsonb_array_length(embedding) = 0
+                    ORDER BY "createdAt" DESC
+                ''')
+                
+                return [
+                    {
+                        "id": record['id'],
+                        "title": record.get('title', ''),
+                        "company": record.get('company', ''),
+                        "department": record.get('department', ''),
+                        "description": record.get('description', ''),
+                        "requirements": record.get('requirements', ''),
+                        "requiredSkills": record.get('requiredSkills', ''),
+                        "benefits": record.get('benefits', ''),
+                        "country": record.get('country', ''),
+                        "city": record.get('city', ''),
+                        "jobType": record.get('jobType', ''),
+                        "experienceLevel": record.get('experienceLevel', ''),
+                        "workType": record.get('workType', ''),
+                        "embedding": json.loads(record.get('embedding', '[]')) if record.get('embedding') else [],
+                        "created_at": record.get('created_at', ''),
+                        "updated_at": record.get('created_at', '')  # Use createdAt for both since updatedAt doesn't exist
+                    }
+                    for record in records
+                ]
+                
+        except Exception as e:
+            logger.error(f"Error getting jobs without embeddings: {str(e)}")
+            return []

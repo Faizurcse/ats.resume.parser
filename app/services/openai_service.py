@@ -5,7 +5,7 @@ Uses OpenAI API to extract structured information from resume text.
 
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 import openai
 from app.config.settings import settings
@@ -90,6 +90,7 @@ Return the parsed data in this exact JSON format:
   "Name": "Full Name",
   "Email": "email@example.com",
   "Phone": "phone number",
+  "Location": "city, state/country or full location if available",
   "Address": "full address if available",
   "GitHub": "GitHub profile URL if found",
   "LinkedIn": "LinkedIn profile URL if found",
@@ -603,4 +604,41 @@ Return the parsed data in this exact JSON format:
             
         except Exception as e:
             logger.warning(f"Error parsing date format '{date_str}': {str(e)}")
+            return None
+
+    async def generate_embedding(self, text: str) -> Optional[List[float]]:
+        """
+        Generate embedding for text using OpenAI's text-embedding-ada-002 model.
+        
+        Args:
+            text (str): Text to generate embedding for
+            
+        Returns:
+            Optional[List[float]]: Embedding vector or None if failed
+        """
+        try:
+            if not text or not text.strip():
+                logger.warning("Empty text provided for embedding generation")
+                return None
+            
+            # Clean and truncate text if too long (OpenAI has limits)
+            cleaned_text = text.strip()
+            if len(cleaned_text) > 8000:  # OpenAI's limit for text-embedding-ada-002
+                cleaned_text = cleaned_text[:8000]
+                logger.info("Text truncated to 8000 characters for embedding generation")
+            
+            # Generate embedding using OpenAI API
+            response = self.client.embeddings.create(
+                model="text-embedding-ada-002",
+                input=cleaned_text
+            )
+            
+            # Extract embedding vector
+            embedding = response.data[0].embedding
+            
+            logger.info(f"Successfully generated embedding with {len(embedding)} dimensions")
+            return embedding
+            
+        except Exception as e:
+            logger.error(f"Error generating embedding: {str(e)}")
             return None

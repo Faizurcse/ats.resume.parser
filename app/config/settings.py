@@ -19,7 +19,7 @@ class Settings:
     
     # OpenAI API Configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     OPENAI_MAX_TOKENS: int = int(os.getenv("OPENAI_MAX_TOKENS", "2000"))
     OPENAI_TEMPERATURE: float = float(os.getenv("OPENAI_TEMPERATURE", "0.1"))
     
@@ -59,10 +59,12 @@ class Settings:
             bool: True if all required settings are valid
         """
         if not cls.OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY is required in environment variables")
+            print("⚠️  Warning: OPENAI_API_KEY not set. Some features may not work.")
+            # Don't raise error, just warn
         
+        # DATABASE_URL is optional since database service has hardcoded values
         if not cls.DATABASE_URL:
-            raise ValueError("DATABASE_URL is required in environment variables")
+            print("ℹ️  Info: DATABASE_URL not set. Using hardcoded database connection.")
         
         return True
 
