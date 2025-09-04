@@ -29,7 +29,10 @@ class JobPostingService:
             # Security Layer 2: Multi-layer security analysis for prompt type determination
             prompt_type = self._analyze_prompt_security(prompt)
             
-            if prompt_type == "non_job_related":
+            if prompt_type == "invalid_prompt":
+                # Invalid prompt pattern (random characters, etc.) - raise error
+                raise ValueError(f"Invalid prompt: '{prompt}' contains random characters or is not a meaningful job description. Please provide a proper job-related prompt.")
+            elif prompt_type == "non_job_related":
                 # Non-job related prompt - raise error instead of generating job
                 raise ValueError(f"Invalid prompt: '{prompt}' is not related to job postings. Please provide a job-related prompt.")
             elif prompt_type == "single_skill":
@@ -48,6 +51,17 @@ class JobPostingService:
                 # Detailed prompt - return comprehensive job posting
                 system_prompt = self._get_detailed_prompt()
                 logger.info(f"Using detailed prompt for: {prompt}")
+                
+                # Pre-process the prompt to extract fields explicitly
+                extracted_fields = self._extract_fields_from_prompt(prompt)
+                if extracted_fields and len(extracted_fields) >= 5:  # If we have enough fields, use direct approach
+                    logger.info(f"Extracted {len(extracted_fields)} fields from prompt - using direct field mapping")
+                    # Use direct field mapping instead of AI generation
+                    return self._create_job_from_extracted_fields(extracted_fields)
+                elif extracted_fields:
+                    logger.info(f"Extracted {len(extracted_fields)} fields from prompt - using AI with extracted fields")
+                    # Modify the prompt to include extracted fields
+                    prompt = self._format_extracted_fields(extracted_fields)
             else:
                 # Default fallback - return basic job posting (SECURE FALLBACK)
                 system_prompt = self._get_simple_prompt()
@@ -59,7 +73,7 @@ class JobPostingService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Generate job posting: {prompt}"}
                 ],
-                max_tokens=800,  # Increased for better response quality
+                max_tokens=2000,  # Increased for comprehensive job descriptions
                 temperature=0.1,  # Slight randomness for variety
                 top_p=0.9,  # Higher top_p for better quality
                 response_format={"type": "json_object"},  # Force JSON response
@@ -208,18 +222,173 @@ class JobPostingService:
         # Check if prompt contains non-job related keywords
         return any(keyword in clean_prompt for keyword in non_job_keywords)
     
+    def _is_invalid_prompt_pattern(self, prompt: str) -> bool:
+        """Check if prompt contains invalid patterns like random characters"""
+        clean_prompt = prompt.strip()
+        
+        # Skip validation for detailed job posting prompts (they contain field specifications)
+        if self._is_job_posting_with_fields(prompt):
+            return False
+        
+        import re
+        
+        # Check for obvious random character sequences (more strict patterns)
+        # Pattern: 15+ consecutive letters without spaces (keyboard mashing)
+        random_letter_pattern = re.compile(r'[a-z]{15,}|[A-Z]{15,}')
+        if random_letter_pattern.search(clean_prompt):
+            return True
+        
+        # Check for random number sequences (10+ consecutive digits)
+        random_number_pattern = re.compile(r'[0-9]{10,}')
+        if random_number_pattern.search(clean_prompt):
+            return True
+        
+        # Check for random special character sequences (8+ consecutive special chars)
+        random_special_pattern = re.compile(r'[^a-zA-Z0-9\s]{8,}')
+        if random_special_pattern.search(clean_prompt):
+            return True
+        
+        # Check for repeated characters (10+ same character in a row)
+        repeated_char_pattern = re.compile(r'(.)\1{10,}')
+        if repeated_char_pattern.search(clean_prompt):
+            return True
+        
+        # Check for minimum meaningful words (at least 2 words with length > 1)
+        words = [word for word in clean_prompt.split() if len(word) > 1]
+        if len(words) < 2:
+            return True
+        
+        # Check for job-related keywords (must contain at least one)
+        job_keywords = [
+            'job', 'position', 'role', 'developer', 'engineer', 'manager', 'analyst', 
+            'designer', 'programmer', 'sales', 'marketing', 'hr', 'finance', 'admin', 
+            'support', 'consultant', 'specialist', 'coordinator', 'assistant', 'director', 
+            'lead', 'senior', 'junior', 'intern', 'freelance', 'remote', 'full-time', 
+            'part-time', 'contract', 'employee', 'staff', 'worker', 'professional',
+            'career', 'employment', 'hiring', 'recruitment', 'vacancy', 'opening',
+            'company', 'department', 'salary', 'experience', 'skills', 'requirements',
+            'benefits', 'location', 'work', 'team', 'project', 'technology', 'software'
+        ]
+        
+        clean_lower = clean_prompt.lower()
+        has_job_keywords = any(keyword in clean_lower for keyword in job_keywords)
+        if not has_job_keywords:
+            return True
+        
+        return False
+    
+    def _extract_fields_from_prompt(self, prompt: str) -> Dict[str, str]:
+        """Extract field specifications from detailed prompts"""
+        extracted_fields = {}
+        
+        # Field patterns to look for - improved regex patterns
+        field_patterns = {
+            'company': r'company:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'department': r'department:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'jobTitle': r'jobTitle:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'internalSPOC': r'internalSPOC:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'recruiter': r'recruiter:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'email': r'email:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'jobType': r'jobType:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'experienceLevel': r'experienceLevel:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'country': r'country:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'city': r'city:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'fullLocation': r'fullLocation:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'workType': r'workType:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'jobStatus': r'jobStatus:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'salaryMin': r'salaryMin:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'salaryMax': r'salaryMax:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'priority': r'priority:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'description': r'description:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'requirements': r'requirements:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'requiredSkills': r'requiredSkills:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)',
+            'benefits': r'benefits:\s*([^a-z][^:]*?)(?=\s+[a-z]+:|$)'
+        }
+        
+        import re
+        for field_name, pattern in field_patterns.items():
+            match = re.search(pattern, prompt, re.IGNORECASE | re.DOTALL)
+            if match:
+                value = match.group(1).strip()
+                if value:
+                    extracted_fields[field_name] = value
+                    logger.info(f"Extracted {field_name}: {value[:50]}...")
+        
+        return extracted_fields
+    
+    def _format_extracted_fields(self, extracted_fields: Dict[str, str]) -> str:
+        """Format extracted fields into a clear prompt for the AI"""
+        formatted_prompt = "Generate a job posting with the following specifications:\n\n"
+        
+        for field_name, value in extracted_fields.items():
+            formatted_prompt += f"{field_name}: {value}\n"
+        
+        formatted_prompt += "\nPlease create a complete job posting using ALL the above specifications."
+        
+        return formatted_prompt
+    
+    def _create_job_from_extracted_fields(self, extracted_fields: Dict[str, str]) -> Dict[str, Any]:
+        """Create job posting directly from extracted fields"""
+        job_data = {}
+        
+        # Map extracted fields to job data structure
+        field_mapping = {
+            'company': 'company',
+            'department': 'department', 
+            'jobTitle': 'title',
+            'internalSPOC': 'internalSPOC',
+            'recruiter': 'recruiter',
+            'email': 'email',
+            'jobType': 'jobType',
+            'experienceLevel': 'experienceLevel',
+            'country': 'country',
+            'city': 'city',
+            'fullLocation': 'fullLocation',
+            'workType': 'workType',
+            'jobStatus': 'jobStatus',
+            'salaryMin': 'salaryMin',
+            'salaryMax': 'salaryMax',
+            'priority': 'priority',
+            'description': 'description',
+            'requirements': 'requirements',
+            'requiredSkills': 'requiredSkills',
+            'benefits': 'benefits'
+        }
+        
+        # Map all extracted fields
+        for field_name, value in extracted_fields.items():
+            if field_name in field_mapping:
+                job_data[field_mapping[field_name]] = value
+                logger.info(f"Mapped {field_name} -> {field_mapping[field_name]}: {value[:50]}...")
+        
+        # Ensure all required fields are present (fill with empty string if missing)
+        required_fields = ['title', 'company', 'department', 'internalSPOC', 'recruiter', 'email', 
+                          'jobType', 'experienceLevel', 'country', 'city', 'fullLocation', 'workType', 
+                          'jobStatus', 'salaryMin', 'salaryMax', 'priority', 'description', 
+                          'requirements', 'requiredSkills', 'benefits']
+        
+        for field in required_fields:
+            if field not in job_data:
+                job_data[field] = ""
+        
+        logger.info(f"Created job posting with {len(job_data)} fields from extracted data")
+        return job_data
+    
     def _is_job_posting_with_fields(self, prompt: str) -> bool:
         """Check if prompt is a job posting creation with field specifications"""
         clean_prompt = prompt.strip().lower()
         
-        # Job posting field indicators
+        # Job posting field indicators (all lowercase for case-insensitive matching)
         field_indicators = [
             'email:', 'spoc:', 'internalspoc:', 'recruiter:', 'company:', 'department:',
             'jobtype:', 'job type:', 'experiencelevel:', 'experience level:', 'country:',
             'city:', 'location:', 'worktype:', 'work type:', 'jobstatus:', 'job status:',
             'salarymin:', 'salary min:', 'salarymax:', 'salary max:', 'priority:',
             'description:', 'requirements:', 'requiredskills:', 'required skills:',
-            'benefits:', 'title:', 'jobtitle:', 'job title:'
+            'benefits:', 'title:', 'jobtitle:', 'job title:',
+            # Additional field indicators for comprehensive job descriptions (lowercase)
+            'fulllocation:', 'worktype:', 'jobstatus:', 'salarymin:', 'salarymax:',
+            'requiredskills:', 'internalspoc:', 'experiencelevel:', 'jobtitle:'
         ]
         
         # Check if prompt contains field specifications
@@ -236,6 +405,7 @@ class JobPostingService:
             'coordinator', 'assistant', 'director', 'lead', 'architect', 'consultant',
             'administrator', 'supervisor', 'executive', 'officer', 'representative',
             'technician', 'operator', 'clerk', 'secretary', 'receptionist',
+            'principal', 'senior', 'junior', 'staff', 'associate', 'vice',
             
             # Skills & Technologies
             'java', 'python', 'javascript', 'react', 'angular', 'vue', 'node',
@@ -247,6 +417,23 @@ class JobPostingService:
             'hire', 'recruit', 'employment', 'career', 'job', 'work', 'position',
             'role', 'vacancy', 'opening', 'opportunity', 'candidate', 'resume',
             'interview', 'salary', 'benefits', 'experience', 'qualification',
+            'seeking', 'join', 'team', 'developing', 'implementing', 'collaborating',
+            'deliver', 'products', 'transform', 'industries', 'growth', 'opportunities',
+            'groundbreaking', 'projects', 'initiatives', 'mentor', 'contribute',
+            'strategy', 'roadmap', 'bachelor', 'degree', 'computer', 'science',
+            'machine', 'learning', 'artificial', 'intelligence', 'proficiency',
+            'deep', 'learning', 'computer', 'vision', 'natural', 'language',
+            'processing', 'cloud', 'platforms', 'mlops', 'problem', 'solving',
+            'analytical', 'skills', 'communication', 'teamwork', 'abilities',
+            'pipelines', 'databases', 'engineering', 'understanding', 'software',
+            'development', 'practices', 'agile', 'methodologies', 'health', 'insurance',
+            'coverage', 'dental', 'vision', 'retirement', 'plan', 'company', 'match',
+            'paid', 'time', 'off', 'flexible', 'working', 'hours', 'professional',
+            'development', 'budget', 'gym', 'membership', 'reimbursement', 'free',
+            'lunch', 'snacks', 'remote', 'work', 'options', 'annual', 'performance',
+            'bonus', 'stock', 'options', 'wellness', 'programs', 'team', 'building',
+            'events', 'conference', 'attendance', 'support', 'certification',
+            'reimbursement', 'mentorship', 'programs', 'advancement', 'opportunities',
             
             # Industries
             'software', 'technology', 'it', 'finance', 'banking', 'healthcare',
@@ -266,9 +453,13 @@ class JobPostingService:
         """Multi-layer security analysis to determine prompt type"""
         clean_prompt = prompt.strip().lower()
         
-        # Layer 1: Check for non-job related content (HIGHEST PRIORITY)
-        if self._is_non_job_related_prompt(prompt):
-            return "non_job_related"
+        # Layer 0: Check for invalid/random character patterns (HIGHEST PRIORITY)
+        if self._is_invalid_prompt_pattern(prompt):
+            return "invalid_prompt"
+        
+        # Layer 1: Check for job posting creation with field specifications
+        if self._is_job_posting_with_fields(prompt):
+            return "detailed_job"
         
         # Layer 2: Check for job-related content
         if self._is_job_related_prompt(prompt):
@@ -286,7 +477,11 @@ class JobPostingService:
         if self._is_generic_word_search(prompt):
             return "generic_job"
         
-        # Layer 5: SECURE FALLBACK - Handle ANY unknown prompt
+        # Layer 5: Check for non-job related content (LOWER PRIORITY)
+        if self._is_non_job_related_prompt(prompt):
+            return "non_job_related"
+        
+        # Layer 6: SECURE FALLBACK - Handle ANY unknown prompt
         # This ensures 100% coverage for any prompt in the world
         return "secure_fallback"
     
@@ -350,9 +545,15 @@ class JobPostingService:
         """Get system prompt for detailed job posting generation."""
         return """You are a job posting generator. Create comprehensive job postings in this exact JSON format.
 
-IMPORTANT: Extract ALL fields that are specified in the user's prompt using patterns like:
+CRITICAL INSTRUCTIONS:
+1. The user's prompt contains detailed field specifications with colons (e.g., "company: Appit Software Solutions")
+2. You MUST extract and include ALL fields that are explicitly mentioned with colons
+3. Do not omit any fields that are provided in the user's input
+4. Extract the exact values after each colon, including long descriptions
+
+FIELD EXTRACTION PATTERNS:
 - "company: [value]" -> extract company field
-- "department: [value]" -> extract department field
+- "department: [value]" -> extract department field  
 - "jobTitle: [value]" -> extract title field
 - "internalSPOC: [value]" -> extract internalSPOC field
 - "recruiter: [value]" -> extract recruiter field
@@ -367,43 +568,54 @@ IMPORTANT: Extract ALL fields that are specified in the user's prompt using patt
 - "salaryMin: [value]" -> extract salaryMin field
 - "salaryMax: [value]" -> extract salaryMax field
 - "priority: [value]" -> extract priority field
-- "description: [value]" -> extract description field
-- "requirements: [value]" -> extract requirements field
-- "requiredSkills: [value]" -> extract requiredSkills field
-- "benefits: [value]" -> extract benefits field
+- "description: [value]" -> extract description field (can be very long)
+- "requirements: [value]" -> extract requirements field (can be very long)
+- "requiredSkills: [value]" -> extract requiredSkills field (can be very long)
+- "benefits: [value]" -> extract benefits field (can be very long)
 
-Return JSON with ONLY the fields that are explicitly specified in the user's prompt:
+IMPORTANT: For long field values (like description, requirements, requiredSkills, benefits), extract the ENTIRE content after the colon until the next field or end of prompt.
+
+Return JSON with ALL fields that are explicitly specified in the user's prompt:
 
 {
-  "title": "Job Title (from jobTitle: or title:)",
-  "company": "Company Name (from company:)",
-  "department": "Department Name (from department:)",
-  "internalSPOC": "Internal Point of Contact (from internalSPOC:)",
-  "recruiter": "Recruiter Name (from recruiter:)",
-  "email": "contact@company.com (from email:)",
-  "jobType": "Full-time/Part-time/Contract/Internship (from jobType:)",
-  "experienceLevel": "Entry/Intermediate/Senior/Executive (from experienceLevel:)",
-  "country": "Country (from country:)",
-  "city": "City (from city:)",
-  "fullLocation": "Full Location Description (from fullLocation:)",
-  "workType": "ONSITE/REMOTE/HYBRID (from workType:)",
-  "jobStatus": "ACTIVE/INACTIVE/CLOSED (from jobStatus:)",
-  "salaryMin": "Salary minimum (from salaryMin:)",
-  "salaryMax": "Salary maximum (from salaryMax:)",
-  "priority": "High/Medium/Low (from priority:)",
-  "description": "Detailed job description (from description:)",
-  "requirements": "Job requirements (from requirements:)",
-  "requiredSkills": "Required skills (from requiredSkills:)",
-  "benefits": "Company benefits (from benefits:)"
+  "title": "Extract from jobTitle: field",
+  "company": "Extract from company: field",
+  "department": "Extract from department: field",
+  "internalSPOC": "Extract from internalSPOC: field",
+  "recruiter": "Extract from recruiter: field",
+  "email": "Extract from email: field",
+  "jobType": "Extract from jobType: field",
+  "experienceLevel": "Extract from experienceLevel: field",
+  "country": "Extract from country: field",
+  "city": "Extract from city: field",
+  "fullLocation": "Extract from fullLocation: field",
+  "workType": "Extract from workType: field",
+  "jobStatus": "Extract from jobStatus: field",
+  "salaryMin": "Extract from salaryMin: field",
+  "salaryMax": "Extract from salaryMax: field",
+  "priority": "Extract from priority: field",
+  "description": "Extract from description: field (include full text)",
+  "requirements": "Extract from requirements: field (include full text)",
+  "requiredSkills": "Extract from requiredSkills: field (include full text)",
+  "benefits": "Extract from benefits: field (include full text)"
 }
 
 CRITICAL RULES:
 1. Extract ALL fields that are specified in the user's prompt
 2. Use the exact values provided after each field colon
 3. If a field is specified like "company: [value]", it MUST be included in the response
-4. Return ONLY valid JSON with no additional text
-5. Do not omit any fields that are explicitly mentioned in the prompt
-6. Pay special attention to field specifications with colons (e.g., "company: Appit Software Solutions")"""
+4. For long fields (description, requirements, requiredSkills, benefits), extract ALL text after the colon
+5. Return ONLY valid JSON with no additional text
+6. Do not omit any fields that are explicitly mentioned in the prompt
+7. Pay special attention to field specifications with colons (e.g., "company: Appit Software Solutions")
+8. If a field value is very long, include the ENTIRE value, not just a summary
+
+EXAMPLE EXTRACTION:
+If user provides: "description: We are seeking a talented Senior AI Specialist to join our cutting-edge AI team..."
+Extract: "We are seeking a talented Senior AI Specialist to join our cutting-edge AI team..." (full text)
+
+If user provides: "requiredSkills: Python, TensorFlow, PyTorch, Scikit-learn, Pandas, NumPy..."
+Extract: "Python, TensorFlow, PyTorch, Scikit-learn, Pandas, NumPy..." (full list)"""
     
     def _get_single_skill_prompt(self) -> str:
         """Get system prompt for single skill search (e.g., 'java')."""

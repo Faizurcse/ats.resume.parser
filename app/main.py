@@ -4,6 +4,7 @@ Simplified version with only essential endpoints.
 """
 
 import logging
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -345,23 +346,39 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.on_event("startup")
 async def startup_event():
     """
-    Application startup event handler with basic status display.
+    Application startup event handler with comprehensive status display.
     """
     try:
-        # Basic startup message - avoid heavy operations during startup
-        logger.info("🚀" + "="*50)
-        logger.info(f"🚀 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-        logger.info(f"🔧 Debug mode: {settings.DEBUG}")
-        logger.info(f"📁 Max file size: {settings.MAX_FILE_SIZE} bytes")
-        logger.info(f"📄 Supported formats: {settings.ALLOWED_EXTENSIONS}")
-        logger.info("="*50)
-        logger.info("🌐 Server is starting...")
-        logger.info("📚 API Documentation: http://localhost:8000/docs")
-        logger.info("📖 ReDoc Documentation: http://localhost:8000/redoc")
-        logger.info("="*50)
+        # Show comprehensive startup status
+        from app.services.startup_status_service import startup_status_service
         
-        # Note: Comprehensive startup status is available at /startup-status endpoint
-        logger.info("ℹ️  For detailed system status, visit: /startup-status")
+        # Display comprehensive startup status with timeout
+        try:
+            await asyncio.wait_for(
+                startup_status_service.display_comprehensive_startup_status(),
+                timeout=30.0  # 30 second timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning("⚠️  Startup status check timed out - database may be slow to respond")
+            logger.info("🚀 Starting Resume Parser Backend...")
+            logger.info("=" * 60)
+            logger.info(f"🎯 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+            logger.info(f"🌐 Server will be available at: http://localhost:{settings.PORT}")
+            logger.info(f"📚 API Documentation: http://localhost:{settings.PORT}/docs")
+            logger.info(f"📖 ReDoc Documentation: http://localhost:{settings.PORT}/redoc")
+            logger.info("=" * 60)
+            logger.info("ℹ️  For detailed system status, visit: /startup-status")
+        except Exception as e:
+            logger.error(f"⚠️  Could not show comprehensive startup status: {str(e)}")
+            # Fallback to basic startup message
+            logger.info("🚀 Starting Resume Parser Backend...")
+            logger.info("=" * 60)
+            logger.info(f"🎯 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+            logger.info(f"🌐 Server will be available at: http://localhost:{settings.PORT}")
+            logger.info(f"📚 API Documentation: http://localhost:{settings.PORT}/docs")
+            logger.info(f"📖 ReDoc Documentation: http://localhost:{settings.PORT}/redoc")
+            logger.info("=" * 60)
+            logger.info("ℹ️  For detailed system status, visit: /startup-status")
         
     except Exception as e:
         logger.error(f"❌ Startup failed: {str(e)}")

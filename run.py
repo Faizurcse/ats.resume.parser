@@ -14,8 +14,22 @@ async def show_startup_status():
         # Import and use the comprehensive startup status service
         from app.services.startup_status_service import startup_status_service
         
-        # Display comprehensive startup status
-        await startup_status_service.display_comprehensive_startup_status()
+        # Display comprehensive startup status with timeout
+        await asyncio.wait_for(
+            startup_status_service.display_comprehensive_startup_status(),
+            timeout=30.0  # 30 second timeout
+        )
+        
+    except asyncio.TimeoutError:
+        print("⚠️  Startup status check timed out - database may be slow to respond")
+        print("🚀 Starting Resume Parser Backend...")
+        print("=" * 60)
+        print(f"🎯 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+        print(f"🌐 Server will be available at: http://localhost:{settings.PORT}")
+        print(f"📚 API Documentation: http://localhost:{settings.PORT}/docs")
+        print(f"📖 ReDoc Documentation: http://localhost:{settings.PORT}/redoc")
+        print("=" * 60)
+        print("ℹ️  For detailed system status, visit: /startup-status")
         
     except Exception as e:
         print(f"⚠️  Could not show comprehensive startup status: {str(e)}")
@@ -27,6 +41,7 @@ async def show_startup_status():
         print(f"📚 API Documentation: http://localhost:{settings.PORT}/docs")
         print(f"📖 ReDoc Documentation: http://localhost:{settings.PORT}/redoc")
         print("=" * 60)
+        print("ℹ️  For detailed system status, visit: /startup-status")
 
 if __name__ == "__main__":
     # Show startup status

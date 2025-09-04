@@ -70,9 +70,15 @@ class StartupStatusService:
             # 4. Job Embeddings Status (with proper database initialization)
             try:
                 # Ensure database is fully initialized before making queries
-                await self.db_service._get_pool()
+                await asyncio.wait_for(self.db_service._get_pool(), timeout=5.0)
                 await asyncio.sleep(1.0)  # Wait for database to be ready
                 await self._display_job_embeddings_status(status_report)
+            except asyncio.TimeoutError:
+                logger.warning("Job embeddings status check timed out - database may be slow")
+                status_report["components"]["job_embeddings"] = {
+                    "status": "⚠️ TIMEOUT",
+                    "message": "Database connection timeout - job embeddings status unavailable"
+                }
             except Exception as e:
                 logger.warning(f"Job embeddings status check failed: {str(e)}")
                 status_report["components"]["job_embeddings"] = {
@@ -83,9 +89,15 @@ class StartupStatusService:
             # 5. Resume Embeddings Status (with proper database initialization)
             try:
                 # Ensure database is fully initialized before making queries
-                await self.db_service._get_pool()
+                await asyncio.wait_for(self.db_service._get_pool(), timeout=5.0)
                 await asyncio.sleep(1.0)  # Wait for database to be ready
                 await self._display_resume_embeddings_status(status_report)
+            except asyncio.TimeoutError:
+                logger.warning("Resume embeddings status check timed out - database may be slow")
+                status_report["components"]["resume_embeddings"] = {
+                    "status": "⚠️ TIMEOUT",
+                    "message": "Database connection timeout - resume embeddings status unavailable"
+                }
             except Exception as e:
                 logger.warning(f"Resume embeddings status check failed: {str(e)}")
                 status_report["components"]["resume_embeddings"] = {
@@ -96,9 +108,15 @@ class StartupStatusService:
             # 6. Matching System Status (with proper database initialization)
             try:
                 # Ensure database is fully initialized before making queries
-                await self.db_service._get_pool()
+                await asyncio.wait_for(self.db_service._get_pool(), timeout=5.0)
                 await asyncio.sleep(1.0)  # Wait for database to be ready
                 await self._display_matching_system_status(status_report)
+            except asyncio.TimeoutError:
+                logger.warning("Matching system status check timed out - database may be slow")
+                status_report["components"]["matching_system"] = {
+                    "status": "⚠️ TIMEOUT",
+                    "message": "Database connection timeout - matching system status unavailable"
+                }
             except Exception as e:
                 logger.warning(f"Matching system status check failed: {str(e)}")
                 status_report["components"]["matching_system"] = {
@@ -153,8 +171,8 @@ class StartupStatusService:
             logger.info("🗄️  DATABASE CONNECTION STATUS")
             logger.info("   " + "─"*50)
             
-            # Test database connection
-            await self.db_service._get_pool()
+            # Test database connection with timeout
+            await asyncio.wait_for(self.db_service._get_pool(), timeout=10.0)
             
             logger.info("   ✅ Database: CONNECTED SUCCESSFULLY")
             logger.info("   🏢 Host: 147.93.155.233:5432")
@@ -174,11 +192,37 @@ class StartupStatusService:
                 "tables": ["resume_data", "Ats_JobPost"]
             }
             
+        except asyncio.TimeoutError:
+            logger.warning("   ⚠️  Database Connection: TIMEOUT (10s)")
+            logger.info("   🏢 Host: 147.93.155.233:5432")
+            logger.info("   🗄️  Database: ai_ats")
+            logger.info("   👤 User: root")
+            logger.info("   ⚠️  Connection may be slow - server will start anyway")
+            logger.info("   " + "─"*50)
+            
+            status_report["components"]["database"] = {
+                "status": "⚠️ TIMEOUT",
+                "host": "147.93.155.233",
+                "port": 5432,
+                "database": "ai_ats",
+                "user": "root",
+                "warning": "Connection timeout - server will start anyway"
+            }
+            
         except Exception as e:
             logger.error(f"   ❌ Database Connection Failed: {str(e)}")
+            logger.info("   🏢 Host: 147.93.155.233:5432")
+            logger.info("   🗄️  Database: ai_ats")
+            logger.info("   👤 User: root")
             logger.info("   ⚠️  Server will start but database features may not work")
+            logger.info("   " + "─"*50)
+            
             status_report["components"]["database"] = {
                 "status": "❌ CONNECTION FAILED",
+                "host": "147.93.155.233",
+                "port": 5432,
+                "database": "ai_ats",
+                "user": "root",
                 "error": str(e),
                 "warning": "Database features may not work"
             }
