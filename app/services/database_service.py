@@ -147,6 +147,7 @@ class DatabaseService:
                     file_size INTEGER NOT NULL,
                     processing_time FLOAT NOT NULL,
                     parsed_data JSONB NOT NULL,
+                    embedding JSONB,
                     candidate_name VARCHAR(255),
                     candidate_email VARCHAR(255),
                     candidate_phone VARCHAR(100),
@@ -226,6 +227,20 @@ class DatabaseService:
                 # Set default for future records
                 await conn.execute('ALTER TABLE resume_data ALTER COLUMN is_unique SET DEFAULT TRUE')
                 logger.info("Added missing is_unique column")
+            
+            # Check if embedding column exists
+            columns = await conn.fetch('''
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'resume_data' AND column_name = 'embedding'
+            ''')
+            
+            if not columns:
+                # Add embedding column for storing resume embeddings
+                await conn.execute('ALTER TABLE resume_data ADD COLUMN embedding JSONB')
+                logger.info("Added missing embedding column")
+            
+            # Migration will be handled via API endpoint when needed
                 
         except Exception as e:
             logger.warning(f"Could not add missing columns: {str(e)}")
@@ -478,6 +493,7 @@ class DatabaseService:
                         "file_size": record['file_size'],
                         "processing_time": record['processing_time'],
                         "parsed_data": record['parsed_data'],
+                        "embedding": record.get('embedding'),  # Include embedding column
                         "candidate_name": record['candidate_name'],
                         "candidate_email": record['candidate_email'],
                         "candidate_phone": record['candidate_phone'],
@@ -518,8 +534,17 @@ class DatabaseService:
                 existing_columns = {col['column_name'] for col in columns_info}
                 
                 # Build query based on available columns
-                if 'file_path' in existing_columns and 'is_unique' in existing_columns:
-                    # Full schema - use all columns
+                if 'file_path' in existing_columns and 'is_unique' in existing_columns and 'embedding' in existing_columns:
+                    # Full schema - use all columns including embedding
+                    query = '''
+                        SELECT id, filename, file_path, file_type, candidate_name, candidate_email, 
+                               total_experience, parsed_data, embedding, created_at
+                        FROM resume_data 
+                        ORDER BY created_at DESC
+                        LIMIT $1 OFFSET $2
+                    '''
+                elif 'file_path' in existing_columns and 'is_unique' in existing_columns:
+                    # Schema without embedding column
                     query = '''
                         SELECT id, filename, file_path, file_type, candidate_name, candidate_email, 
                                total_experience, parsed_data, created_at
@@ -549,6 +574,7 @@ class DatabaseService:
                         "candidate_email": record['candidate_email'],
                         "total_experience": record['total_experience'],
                         "parsed_data": record['parsed_data'],
+                        "embedding": record.get('embedding'),  # Include embedding column
                         "created_at": record['created_at'].isoformat() if record['created_at'] else None
                     }
                     for record in records
@@ -1111,29 +1137,142 @@ class DatabaseService:
             raise Exception(f"Failed to update job embedding: {str(e)}")
 
     async def update_resume_embedding(self, resume_id: int, parsed_data: Dict[str, Any]) -> bool:
-        """Update the parsed_data column in the resume table with new embedding."""
+        """Update resume embedding - uses separate column if embedding is in parsed_data, otherwise updates parsed_data."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                # Check if parsed_data contains embedding
+                if 'embedding' in parsed_data and parsed_data['embedding']:
+                    # Extract embedding and store in separate column
+                    embedding = parsed_data['embedding']
+                    
+                    # Store in separate embedding column
+                    result = await conn.execute('''
+                        UPDATE resume_data 
+                        SET embedding = $1 
+                        WHERE id = $2
+                    ''', json.dumps(embedding), resume_id)
+                    
+                    if result == "UPDATE 1":
+                        # Remove embedding from parsed_data to avoid duplication
+                        new_parsed_data = parsed_data.copy()
+                        del new_parsed_data['embedding']
+                        
+                        # Update parsed_data without embedding
+                        await conn.execute('''
+                            UPDATE resume_data 
+                            SET parsed_data = $1 
+                            WHERE id = $2
+                        ''', json.dumps(new_parsed_data), resume_id)
+                        
+                        logger.info(f"Resume embedding updated in separate column for resume ID: {resume_id}")
+                        return True
+                    else:
+                        logger.warning(f"Resume with ID {resume_id} not found for embedding update")
+                        return False
+                else:
+                    # No embedding in parsed_data, just update parsed_data as before
+                    result = await conn.execute('''
+                        UPDATE resume_data 
+                        SET parsed_data = $1 
+                        WHERE id = $2
+                    ''', json.dumps(parsed_data), resume_id)
+                    
+                    if result == "UPDATE 1":
+                        logger.info(f"Resume parsed_data updated successfully for resume ID: {resume_id}")
+                        return True
+                    else:
+                        logger.warning(f"Resume with ID {resume_id} not found for parsed_data update")
+                        return False
+        except Exception as e:
+            logger.error(f"Error updating resume embedding for resume {resume_id}: {str(e)}")
+            raise Exception(f"Failed to update resume embedding: {str(e)}")
+
+    async def update_resume_embedding_column(self, resume_id: int, embedding: List[float]) -> bool:
+        """Update the separate embedding column in the resume table."""
         try:
             pool = await self._get_pool()
             async with pool.acquire() as conn:
                 result = await conn.execute('''
                     UPDATE resume_data 
-                    SET parsed_data = $1 
+                    SET embedding = $1 
                     WHERE id = $2
-                ''', json.dumps(parsed_data), resume_id)
+                ''', json.dumps(embedding), resume_id)
                 
                 if result == "UPDATE 1":
-                    logger.info(f"Resume embedding updated successfully for resume ID: {resume_id}")
+                    logger.info(f"Resume embedding updated successfully in separate column for resume ID: {resume_id}")
                     return True
                 else:
                     logger.warning(f"Resume with ID {resume_id} not found for embedding update")
                     return False
         except Exception as e:
-            logger.error(f"Error updating resume embedding for resume {resume_id}: {str(e)}")
-            raise Exception(f"Failed to update resume embedding: {str(e)}")
+            logger.error(f"Error updating resume embedding column for resume {resume_id}: {str(e)}")
+            raise Exception(f"Failed to update resume embedding column: {str(e)}")
 
+    async def get_resume_embedding(self, resume_id: int) -> Optional[List[float]]:
+        """Get embedding from the separate embedding column."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                result = await conn.fetchval('''
+                    SELECT embedding 
+                    FROM resume_data 
+                    WHERE id = $1
+                ''', resume_id)
+                
+                if result:
+                    # Parse JSON string to list
+                    import json
+                    if isinstance(result, str):
+                        return json.loads(result)
+                    return result
+                return None
+        except Exception as e:
+            logger.error(f"Error getting resume embedding for resume {resume_id}: {str(e)}")
+            return None
 
-
-
+    async def get_resumes_with_embeddings_column(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get resumes that have embeddings in the separate embedding column."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                records = await conn.fetch('''
+                    SELECT id, filename, file_path, file_type, candidate_name, 
+                           candidate_email, total_experience, embedding, created_at
+                    FROM resume_data 
+                    WHERE embedding IS NOT NULL 
+                    ORDER BY created_at DESC 
+                    LIMIT $1 OFFSET $2
+                ''', limit, offset)
+                
+                resumes_with_embeddings = []
+                for record in records:
+                    embedding = record.get('embedding', [])
+                    if isinstance(embedding, str):
+                        import json
+                        try:
+                            embedding = json.loads(embedding)
+                        except:
+                            continue
+                    
+                    if isinstance(embedding, list) and len(embedding) > 0:
+                        resumes_with_embeddings.append({
+                            "id": record['id'],
+                            "filename": record['filename'],
+                            "file_path": record.get('file_path', ''),
+                            "file_type": record['file_type'],
+                            "candidate_name": record['candidate_name'],
+                            "candidate_email": record['candidate_email'],
+                            "total_experience": record['total_experience'],
+                            "embedding": embedding,
+                            "created_at": record['created_at'].isoformat() if record['created_at'] else None
+                        })
+                
+                return resumes_with_embeddings
+                
+        except Exception as e:
+            logger.error(f"Error getting resumes with embeddings from column: {str(e)}")
+            return []
 
     async def get_jobs_with_embeddings_count(self) -> int:
         """

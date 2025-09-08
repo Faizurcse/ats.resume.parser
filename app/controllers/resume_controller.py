@@ -7,6 +7,7 @@ import time
 import logging
 import uuid
 import os
+import json
 from typing import Dict, Any, List
 
 from fastapi import APIRouter, File, UploadFile, HTTPException, status, BackgroundTasks
@@ -99,7 +100,23 @@ async def get_resume_embeddings_status():
             has_embedding = False
             embedding_dimensions = 0
             
-            if parsed_data:
+            # Check separate embedding column first
+            if resume.get('embedding'):
+                has_embedding = True
+                embedding = resume['embedding']
+                if isinstance(embedding, list):
+                    embedding_dimensions = len(embedding)
+                elif isinstance(embedding, str):
+                    try:
+                        import json
+                        embedding_list = json.loads(embedding)
+                        if isinstance(embedding_list, list):
+                            embedding_dimensions = len(embedding_list)
+                    except:
+                        pass
+            
+            # Fallback: check parsed_data for backward compatibility
+            if not has_embedding and parsed_data:
                 # Look for embedding in parsed data
                 if 'embedding' in parsed_data and parsed_data['embedding']:
                     has_embedding = True
@@ -153,7 +170,6 @@ async def get_resume_embeddings_status():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get resume embeddings status: {str(e)}"
         )
-
 
 @router.post("/parse-resume", response_model=BatchResumeParseResponse)
 async def parse_resume(files: List[UploadFile] = File(...), background_tasks: BackgroundTasks = None):
@@ -361,21 +377,28 @@ async def generate_resume_embeddings():
         resumes_without_embeddings = []
         
         for resume in all_resumes:
-            parsed_data = resume.get('parsed_data', {})
-            
-            # Handle parsed_data that might be a JSON string
-            if isinstance(parsed_data, str):
-                try:
-                    import json
-                    parsed_data = json.loads(parsed_data)
-                except (json.JSONDecodeError, TypeError):
-                    continue
-            
-            # Check if resume already has embedding
+            # Check if resume already has embedding in separate column
             has_embedding = False
-            if parsed_data and isinstance(parsed_data, dict):
-                if 'embedding' in parsed_data and parsed_data['embedding']:
-                    has_embedding = True
+            
+            # Check separate embedding column first
+            if resume.get('embedding'):
+                has_embedding = True
+            
+            # Fallback: check parsed_data for backward compatibility
+            if not has_embedding:
+                parsed_data = resume.get('parsed_data', {})
+                
+                # Handle parsed_data that might be a JSON string
+                if isinstance(parsed_data, str):
+                    try:
+                        import json
+                        parsed_data = json.loads(parsed_data)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                
+                if parsed_data and isinstance(parsed_data, dict):
+                    if 'embedding' in parsed_data and parsed_data['embedding']:
+                        has_embedding = True
             
             if not has_embedding:
                 resumes_without_embeddings.append(resume)
@@ -464,11 +487,8 @@ async def generate_resume_embeddings():
                     embedding = await openai_service.generate_embedding(combined_text)
                     
                     if embedding:
-                        # Update resume with embedding
-                        parsed_data['embedding'] = embedding
-                        
-                        # Update in database
-                        update_success = await database_service.update_resume_embedding(resume['id'], parsed_data)
+                        # Update resume with embedding in separate column
+                        update_success = await database_service.update_resume_embedding_column(resume['id'], embedding)
                         
                         if update_success:
                             embeddings_generated += 1

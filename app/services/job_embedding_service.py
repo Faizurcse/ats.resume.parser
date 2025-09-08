@@ -98,7 +98,7 @@ class JobEmbeddingService:
     
     async def generate_job_embedding(self, job_data: Dict[str, Any]) -> Optional[List[float]]:
         """
-        Generate embedding for a job post using OpenAI's text-embedding-ada-002 model.
+        Generate embedding for a job post using OpenAI's text-embedding-3-small model.
         
         Args:
             job_data: Dictionary containing job post data

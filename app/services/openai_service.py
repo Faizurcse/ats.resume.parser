@@ -608,7 +608,7 @@ Return the parsed data in this exact JSON format:
 
     async def generate_embedding(self, text: str) -> Optional[List[float]]:
         """
-        Generate embedding for text using OpenAI's text-embedding-ada-002 model.
+        Generate embedding for text using OpenAI's text-embedding-3-small model.
         
         Args:
             text (str): Text to generate embedding for
@@ -623,13 +623,13 @@ Return the parsed data in this exact JSON format:
             
             # Clean and truncate text if too long (OpenAI has limits)
             cleaned_text = text.strip()
-            if len(cleaned_text) > 8000:  # OpenAI's limit for text-embedding-ada-002
-                cleaned_text = cleaned_text[:8000]
-                logger.info("Text truncated to 8000 characters for embedding generation")
+            if len(cleaned_text) > 8191:  # OpenAI's limit for text-embedding-3-small
+                cleaned_text = cleaned_text[:8191]
+                logger.info("Text truncated to 8191 characters for embedding generation")
             
             # Generate embedding using OpenAI API
             response = self.client.embeddings.create(
-                model="text-embedding-ada-002",
+                model="text-embedding-3-small",
                 input=cleaned_text
             )
             

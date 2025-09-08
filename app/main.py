@@ -16,6 +16,7 @@ from app.controllers.job_posting_controller import router as job_posting_router
 from app.controllers.download_resume_controller import router as download_resume_router
 from app.controllers.job_post_embeddings_controller import router as job_post_embeddings_router
 from app.controllers.candidates_matching_external_controller import router as candidates_matching_router
+from app.controllers.get_embedding_data_controller import router as embedding_data_router
 
 
 
@@ -228,6 +229,7 @@ app.include_router(job_posting_router)
 app.include_router(download_resume_router)
 app.include_router(job_post_embeddings_router)
 app.include_router(candidates_matching_router)
+app.include_router(embedding_data_router)
 
 
 
