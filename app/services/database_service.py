@@ -111,8 +111,9 @@ class DatabaseService:
                 else:
                     logger.info(f"📊 Connected to database: {database} on {host}:{port}")
             
-            # Skip table creation - we're connecting to existing database with existing tables
-            logger.info("📊 Connecting to existing database - using existing tables from Node.js backend")
+            # Create the resume_data table that Python backend needs
+            await self._create_tables()
+            logger.info("📊 Created resume_data table for Python backend")
             
             self._init_done = True
             logger.info("🎉 Database service initialized successfully")
