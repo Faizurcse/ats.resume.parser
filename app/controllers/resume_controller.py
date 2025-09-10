@@ -27,6 +27,17 @@ from app.config.settings import settings
 # Configure logging
 logger = logging.getLogger(__name__)
 
+def _normalize_skills(skills_text: str) -> str:
+    """
+    Pass through skills text without normalization.
+    Let GPT Text-Embedding-3-Small handle all variations naturally.
+    """
+    if not skills_text:
+        return ""
+    
+    # No normalization - trust GPT's natural understanding
+    return skills_text
+
 # Create router
 router = APIRouter(prefix="/api/v1", tags=["resume"])
 
@@ -435,26 +446,22 @@ async def generate_resume_embeddings():
                     if not isinstance(parsed_data, dict):
                         continue
                     
-                    # Create structured text for embedding
-                    candidate_name = parsed_data.get('Name', '')
+                    # Create structured text for embedding - ONLY SKILLS AND EXPERIENCE
                     skills = parsed_data.get('Skills', [])
-                    summary = parsed_data.get('Summary', '')
                     experience = parsed_data.get('Experience', [])
-                    education = parsed_data.get('Education', [])
-                    projects = parsed_data.get('Projects', [])
+                    total_experience = parsed_data.get('TotalExperience', '')
                     
-                    # Build comprehensive text representation
+                    # Build text representation with ONLY skills and experience
                     text_parts = []
-                    if candidate_name:
-                        text_parts.append(f"Name: {candidate_name}")
                     
+                    # Add skills with normalization
                     if skills:
                         skills_text = ", ".join(skills) if isinstance(skills, list) else str(skills)
+                        # Normalize common skill variations for better matching
+                        skills_text = _normalize_skills(skills_text)
                         text_parts.append(f"Skills: {skills_text}")
                     
-                    if summary:
-                        text_parts.append(f"Summary: {summary}")
-                    
+                    # Add experience with normalization
                     if experience:
                         if isinstance(experience, list):
                             exp_text = "; ".join([str(exp) for exp in experience])
@@ -462,19 +469,9 @@ async def generate_resume_embeddings():
                             exp_text = str(experience)
                         text_parts.append(f"Experience: {exp_text}")
                     
-                    if education:
-                        if isinstance(education, list):
-                            edu_text = "; ".join([str(edu) for edu in education])
-                        else:
-                            edu_text = str(education)
-                        text_parts.append(f"Education: {edu_text}")
-                    
-                    if projects:
-                        if isinstance(projects, list):
-                            proj_text = "; ".join([str(proj) for proj in projects])
-                        else:
-                            proj_text = str(projects)
-                        text_parts.append(f"Projects: {proj_text}")
+                    # Add total experience if available
+                    if total_experience:
+                        text_parts.append(f"TotalExperience: {total_experience}")
                     
                     # Combine all text
                     combined_text = "\n".join(text_parts)
@@ -492,6 +489,7 @@ async def generate_resume_embeddings():
                         
                         if update_success:
                             embeddings_generated += 1
+                            candidate_name = resume.get('candidate_name', 'Unknown')
                             logger.info(f"Generated embedding for resume {resume['id']}: {candidate_name}")
                         else:
                             failed_resumes.append({
@@ -718,3 +716,4 @@ async def delete_resume(resume_id: int):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete resume: {str(e)}"
         )
+

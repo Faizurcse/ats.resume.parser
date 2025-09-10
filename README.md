@@ -127,7 +127,7 @@ The application will automatically create the required database tables on first 
 python run.py
 ```
 
-The API will be available at `http://localhost:8000`
+The API will be available at `http://158.220.127.100:8000`
 
 ## 📝 Usage Examples
 
@@ -141,7 +141,7 @@ with open('faiz.pdf', 'rb') as f:
     files = [('files', ('faiz.pdf', f.read(), 'application/pdf'))]
 
 response = requests.post(
-    'http://localhost:8000/api/v1/parse-resume',
+    'http://158.220.127.100:8000/api/v1/parse-resume',
     files=files
 )
 
@@ -169,7 +169,7 @@ files = [
 ]
 
 response = requests.post(
-    'http://localhost:8000/api/v1/parse-resume',
+    'http://158.220.127.100:8000/api/v1/parse-resume',
     files=files
 )
 
@@ -190,13 +190,13 @@ if response.status_code == 200:
 
 **Single file:**
 ```bash
-curl -X POST "http://localhost:8000/api/v1/parse-resume" \
+curl -X POST "http://158.220.127.100:8000/api/v1/parse-resume" \
   -F "files=@faiz.pdf"
 ```
 
 **Multiple files:**
 ```bash
-curl -X POST "http://localhost:8000/api/v1/parse-resume" \
+curl -X POST "http://158.220.127.100:8000/api/v1/parse-resume" \
   -F "files=@faiz.pdf" \
   -F "files=@faiz.png" \
   -F "files=@resume.txt"
@@ -215,7 +215,7 @@ formData.append('files', file1);
 formData.append('files', file2);
 formData.append('files', file3);
 
-fetch('http://localhost:8000/api/v1/parse-resume', {
+fetch('http://158.220.127.100:8000/api/v1/parse-resume', {
   method: 'POST',
   body: formData
 })
@@ -234,7 +234,7 @@ You can test the API using:
 - **cURL commands** (examples provided above)
 - **Postman** or similar API testing tools
 - **Your own client applications** using the provided code examples
-- **FastAPI's automatic documentation** at `http://localhost:8000/docs`
+- **FastAPI's automatic documentation** at `http://158.220.127.100:8000/docs`
 
 ## 🔧 Configuration
 

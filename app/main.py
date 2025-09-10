@@ -272,7 +272,7 @@ async def root():
                 "health": "/job-post-embeddings/health"
             },
             "candidates_matching": {
-                "hybrid_matching": "/api/v1/candidates-matching/job/{job_id}/candidates-external-hybrid",
+                "fast_matching": "/api/v1/candidates-matching/job/{job_id}/candidates-fast",
                 "all_matches": "/api/v1/candidates-matching/all-matches",
                 "populate_locations": "/api/v1/candidates-matching/populate-job-locations",
                 "health": "/api/v1/candidates-matching/health"

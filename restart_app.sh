@@ -28,5 +28,5 @@ echo "📝 Recent logs:"
 pm2 logs AI_Ats_python_Backend --lines 20
 
 echo "✅ Restart completed!"
-echo "🌐 Test the application: curl http://localhost:8000/health"
+echo "🌐 Test the application: curl http://158.220.127.100:8000/health"
 echo "📚 API Docs: https://pyats.workisy.in/docs"

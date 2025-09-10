@@ -326,10 +326,8 @@ class StartupStatusService:
                 
                 # Show embedding details if available
                 if jobs_with_embeddings > 0:
-                    embeddings_info = await job_embedding_service.show_all_job_embeddings(limit=3)
-                    if embeddings_info["success"]:
-                        logger.info(f"   📏 Embedding Dimensions: {embeddings_info['total_dimensions']}")
-                        logger.info(f"   📊 Avg Dimensions per Job: {embeddings_info['average_dimensions']:.1f}")
+                    logger.info(f"   📏 Embedding Model: text-embedding-3-small")
+                    logger.info(f"   📊 Embedding Dimensions: 1536 per job")
                 
                 status_report["components"]["job_embeddings"] = {
                     "status": "✅ ACTIVE",

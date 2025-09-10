@@ -21,8 +21,8 @@ Uses complete LLM-driven approach with EXPERT-LEVEL intelligence:
 - EXPERT-LEVEL LLM INTELLIGENCE for maximum accuracy
 
 📋 ONLY 2 ESSENTIAL APIs:
-1. GET /job/{job_id}/candidates-optimized?min_score=0.5
-2. GET /all-matches?min_score=0.3
+1. GET /job/{job_id}/candidates-fast?min_score=0.1
+2. GET /all-matches?min_score=0.1
 
 💰 COST OPTIMIZATION:
 - Caching reduces duplicate API calls
@@ -31,9 +31,9 @@ Uses complete LLM-driven approach with EXPERT-LEVEL intelligence:
 - Batch processing where possible
 
 🔧 USAGE:
-- /candidates-optimized - Fully optimized endpoint (ZERO hardcoding)
-- /candidates-external-hybrid - Original hybrid endpoint
-- Both now use 100% LLM analysis, no manual rules
+- /candidates-fast - Fast single job matching (100% embeddings)
+- /all-matches - Fast bulk matching across all jobs (100% embeddings)
+- Both use pure cosine similarity, no GPT calls
 """
 
 import logging
@@ -46,6 +46,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 from app.services.database_service import DatabaseService
 from app.services.openai_service import OpenAIService
 from app.config.settings import settings
+from app.utils.explanation_utils import (
+    get_skills_explanation, 
+    get_experience_explanation, 
+    get_overall_explanation, 
+    get_fit_status,
+    get_rating
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -247,7 +254,7 @@ class CandidateMatchResponse(BaseModel):
     total_candidates: int
     candidates: List[Dict[str, Any]]
     message: str
-    search_type: str = "Hybrid GPT + Embedding Analysis for Maximum Accuracy"
+    search_type: str = "Skills & Experience Analysis Only (No Embeddings)"
 
 # Pure embedding-based semantic similarity - NO hardcoded rules
 async def calculate_pure_semantic_similarity(job_embedding: List[float], candidate_embedding: List[float]) -> float:
@@ -950,21 +957,17 @@ CRITICAL: Replace [YOUR_SCORE_HERE] with actual numbers from 0.0 to 1.0 based on
             "overall_semantic_match": 0.5
         }
 
-# OPTIMIZED: Hybrid scoring with GPT-4o-mini + Embeddings (zero hardcoding)
-async def calculate_hybrid_match_score_optimized(
-    job_embedding: List[float],
-    resume_embedding: List[float],
+# SIMPLIFIED: Skills and Experience Only Matching (No Embeddings)
+async def calculate_skills_experience_match_score(
     job_data: Dict[str, Any],
     candidate_data: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Calculate match score using GPT-4o-mini + Embeddings - ZERO hardcoded values.
+    Calculate match score using ONLY skills and experience analysis - NO embeddings.
+    Focus on the two most important factors: Skills match and Experience fit.
     """
     try:
-        # Step 1: Pure embedding similarity (mathematical foundation)
-        embedding_score = await calculate_pure_semantic_similarity(job_embedding, resume_embedding)
-        
-        # Step 2: Extract data for GPT analysis
+        # Extract data for analysis
         job_skills = job_data.get('requiredSkills', '').split(',') if job_data.get('requiredSkills') else []
         job_skills = [skill.strip() for skill in job_skills if skill.strip()]
         
@@ -972,92 +975,39 @@ async def calculate_hybrid_match_score_optimized(
         if isinstance(candidate_skills, str):
             candidate_skills = [candidate_skills]
         
-        # Step 3: GPT-4o-mini analysis for all components (no hardcoding)
+        # Step 1: Skills Analysis (70% weight)
         gpt_skills_score = await analyze_skills_with_gpt_optimized(
             job_skills, candidate_skills, 
             job_data.get('title', ''), 
             job_data.get('industry', '')
         )
         
+        # Step 2: Experience Analysis (30% weight)
         gpt_experience_score = await analyze_experience_with_gpt_optimized(
             job_data.get('experienceLevel', ''),
             candidate_data.get('TotalExperience', ''),
             job_data.get('title', '')
         )
         
-        gpt_text_score = await analyze_text_similarity_with_gpt(
-            job_data.get('description', ''),
-            candidate_data.get('Summary', ''),
-            job_data.get('title', '')
-        )
-        
-        # Step 4: Additional GPT analysis for location, department, and salary
-        job_location = job_data.get('fullLocation', '') or 'Location not specified'
-        candidate_location = candidate_data.get('Location') or candidate_data.get('Address', 'Unknown')
-        work_type = job_data.get('workType', 'ONSITE')
-        
-        gpt_location_score = await analyze_location_match_with_gpt(
-            job_location, candidate_location, job_data.get('title', ''), work_type
-        )
-        
-        gpt_department_score = await analyze_department_match_with_gpt(
-            job_data.get('department', ''),
-            candidate_skills,
-            candidate_data.get('TotalExperience', ''),
-            job_data.get('title', '')
-        )
-        
-        gpt_salary_score = await analyze_salary_match_with_gpt(
-            job_data.get('salaryMin', 0),
-            job_data.get('salaryMax', 0),
-            candidate_data.get('TotalExperience', ''),
-            job_data.get('title', ''),
-            job_data.get('industry', '')
-        )
-        
-        # Step 5: Calculate final hybrid score (75% GPT + 25% Embeddings)
-        gpt_component = (
-            gpt_skills_score * 0.35 +      # Skills analysis (35%)
-            gpt_experience_score * 0.20 +  # Experience analysis (20%)
-            gpt_location_score * 0.10 +    # Location analysis (10%)
-            gpt_department_score * 0.05 +  # Department analysis (5%)
-            gpt_salary_score * 0.05        # Salary analysis (5%)
-        )
-        
-        embedding_component = embedding_score * 0.25  # Embeddings (25%)
-        
-        final_score = gpt_component + embedding_component
+        # Step 3: Calculate final score (70% Skills + 30% Experience)
+        final_score = (gpt_skills_score * 0.70) + (gpt_experience_score * 0.30)
         
         # Ensure score is within bounds
         final_score = max(0.0, min(1.0, final_score))
         
         return {
             "overall_score": final_score,
-            "embedding_score": embedding_score,
-            "gpt_skills_score": gpt_skills_score,
-            "gpt_experience_score": gpt_experience_score,
-            "gpt_text_score": gpt_text_score,
-            "gpt_location_score": gpt_location_score,
-            "gpt_department_score": gpt_department_score,
-            "gpt_salary_score": gpt_salary_score,
-            "gpt_component": gpt_component,
-            "embedding_component": embedding_component,
-            "scoring_method": "🚀 GPT-4o-mini (75%) + Embeddings (25%) - Zero Hardcoding"
+            "skills_score": gpt_skills_score,
+            "experience_score": gpt_experience_score,
+            "scoring_method": "🎯 Skills (70%) + Experience (30%) - No Embeddings"
         }
         
     except Exception as e:
-        logger.error(f"Error in hybrid scoring: {str(e)}")
+        logger.error(f"Error in skills/experience scoring: {str(e)}")
         return {
             "overall_score": 0.0,
-            "embedding_score": 0.0,
-            "gpt_skills_score": 0.0,
-            "gpt_experience_score": 0.0,
-            "gpt_text_score": 0.0,
-            "gpt_location_score": 0.0,
-            "gpt_department_score": 0.0,
-            "gpt_salary_score": 0.0,
-            "gpt_component": 0.0,
-            "embedding_component": 0.0,
+            "skills_score": 0.0,
+            "experience_score": 0.0,
             "scoring_method": "Error in calculation"
         }
 
@@ -1194,38 +1144,57 @@ async def calculate_comprehensive_match_score(
 # Get all matched data across all jobs using hybrid system
 @router.get("/all-matches")
 async def get_all_matched_data(
-    min_score: float = Query(default=0.0, description="Minimum match score threshold")
+    min_score: float = Query(default=0.1, description="Minimum match score threshold (default: 0.1)")
 ):
     """
-    Get all matched data across all jobs using 100% GPT-Powered Hybrid System.
+    Get all matched data across all jobs using Skills & Experience Only Matching.
     
     This endpoint:
-    1. Finds all jobs with embeddings
-    2. Matches candidates for each job using hybrid approach
+    1. Finds all jobs in the system
+    2. Matches candidates for each job using skills (70%) and experience (30%) analysis
     3. Returns comprehensive matching data for all jobs
-    4. No limit on candidates per job - returns all matching candidates
+    4. No embedding requirement - works with all resumes
+    5. No limit on candidates per job - returns all matching candidates
     """
     try:
-        logger.info(f"🚀 Getting all matched data across all jobs using Hybrid System")
+        logger.info(f"🚀 FAST: Getting all matched data using EMBEDDING SIMILARITY SEARCH")
         logger.info(f"   🎯 Minimum score: {min_score}")
+        logger.info(f"   ⚡ Method: Pure cosine similarity (no GPT calls)")
         
         # Get all jobs with embeddings
-        all_jobs = await database_service.get_all_jobs()
+        all_jobs = await database_service.get_all_jobs_with_embeddings()
         if not all_jobs:
-            raise HTTPException(status_code=404, detail="No jobs found in the system")
+            raise HTTPException(status_code=404, detail="No jobs with embeddings found in the system")
         
         # Get all resumes with embeddings
-        all_resumes = await database_service.get_all_resumes_with_embeddings(limit=1000)
+        all_resumes = await database_service.get_all_resumes_with_embeddings(limit=1000000)
         logger.info(f"📊 Found {len(all_resumes) if all_resumes else 0} resumes with embeddings")
         
-        # Debug: Check what we actually got
-        if all_resumes:
-            logger.info(f"🔍 First resume sample: {all_resumes[0] if len(all_resumes) > 0 else 'None'}")
-        else:
-            logger.warning("⚠️ No resumes returned from database service!")
-        
         if not all_resumes:
-            raise HTTPException(status_code=404, detail="No resumes with embeddings found in the system")
+            # Fallback: Try to get all resumes and check for embeddings
+            logger.warning("⚠️ No resumes with embeddings found, trying to get all resumes...")
+            all_resumes = await database_service.get_all_resumes(limit=1000000)
+            logger.info(f"📊 Found {len(all_resumes) if all_resumes else 0} total resumes")
+            
+            if not all_resumes:
+                raise HTTPException(status_code=404, detail="No resumes found in the system")
+            
+            # Filter resumes that have embeddings
+            resumes_with_embeddings = []
+            for resume in all_resumes:
+                if resume.get('embedding') and len(resume.get('embedding', [])) > 0:
+                    resumes_with_embeddings.append(resume)
+            
+            all_resumes = resumes_with_embeddings
+            logger.info(f"📊 After filtering: {len(all_resumes)} resumes with embeddings")
+            
+            if not all_resumes:
+                raise HTTPException(status_code=404, detail="No resumes with embeddings found. Please generate embeddings first.")
+        
+        # Debug: Check if we have resumes with embeddings
+        logger.info(f"🔍 Debug: First resume embedding check: {all_resumes[0].get('embedding') is not None if all_resumes else 'No resumes'}")
+        if all_resumes and all_resumes[0].get('embedding'):
+            logger.info(f"🔍 Debug: First resume embedding length: {len(all_resumes[0].get('embedding', []))}")
         
         all_jobs_matches = []
         all_jobs_candidates = []
@@ -1236,231 +1205,98 @@ async def get_all_matched_data(
                 job_id = job.get('id')
                 job_title = job.get('title', 'Unknown')
                 company = job.get('company', 'Unknown')
+                job_embedding = job.get('embedding', [])
                 
                 logger.info(f"🔍 Processing job: {job_title} at {company}")
-                logger.info(f"🔍 Job {job_title}: city='{job.get('city', 'N/A')}', country='{job.get('country', 'N/A')}', fullLocation='{job.get('fullLocation', 'N/A')}'")
-
-                # Compute job location once per job: prefer fullLocation, else city + country
-                city_val = str(job.get('city', '') or '').strip()
-                country_val = str(job.get('country', '') or '').strip()
-                full_location_val = str(job.get('fullLocation', '') or '').strip()
-                computed_job_location = full_location_val or \
-                    (f"{city_val}, {country_val}".strip(', ') if (city_val or country_val) else '') or \
-                    "Location not specified"
-                logger.info(f"🔍 Job {job_title}: computed_job_location='{computed_job_location}'")
-                
-                # Get job embedding - check multiple possible keys
-                job_embedding = job.get('embedding') or job.get('sample_embedding') or job.get('job_embedding')
-                logger.info(f"🔍 Job {job_title}: embedding found = {job_embedding is not None}, keys available = {list(job.keys())}")
                 
                 if not job_embedding:
-                    logger.info(f"⚠️ Job {job_title} has no embeddings, skipping")
-                    all_jobs_matches.append({
-                        "job_id": job_id,
-                        "job_title": job_title,
-                        "company": company,
-                        "status": "No embeddings",
-                        "candidates_count": 0,
-                        "candidates": []
-                    })
+                    logger.warning(f"⚠️ Job {job_title} has no embedding, skipping")
                     continue
                 
-                # Process candidates for this job
                 job_candidates = []
                 
-                logger.info(f"🔍 Processing {len(all_resumes)} resumes for job: {job_title}")
-                logger.info(f"   📊 All resumes data: {all_resumes[:2]}")  # Show first 2 resumes
+                # Fast similarity search for all resumes
+                logger.info(f"⚡ Fast similarity search for {len(all_resumes)} resumes")
                 
                 for resume in all_resumes:
                     try:
-                        logger.info(f"📄 Processing resume {resume.get('id')}: {resume.get('filename', 'Unknown')}")
-                        logger.info(f"   🔑 Resume keys: {list(resume.keys())}")
-                        
                         resume_id = resume['id']
                         parsed_data = resume['parsed_data']
-                        
-                        logger.info(f"   📊 Parsed data type: {type(parsed_data)}")
-                        logger.info(f"   📋 Parsed data keys: {list(parsed_data.keys()) if isinstance(parsed_data, dict) else 'Not a dict'}")
-                        
-                        # Handle parsed_data that might be a JSON string
-                        if isinstance(parsed_data, str):
-                            try:
-                                import json
-                                parsed_data = json.loads(parsed_data)
-                                logger.info(f"   ✅ Successfully parsed JSON string")
-                            except (json.JSONDecodeError, TypeError) as e:
-                                logger.error(f"   ❌ Failed to parse JSON: {str(e)}")
-                                continue
-                        
-                        # Get resume embedding - check multiple locations
-                        resume_embedding = resume.get('embedding') or parsed_data.get('embedding')
-                        logger.info(f"   🧠 Resume embedding found: {resume_embedding is not None}")
-                        logger.info(f"   🔍 Resume object has 'embedding': {resume.get('embedding') is not None}")
-                        logger.info(f"   🔍 Parsed data has 'embedding': {parsed_data.get('embedding') is not None}")
+                        resume_embedding = resume.get('embedding', [])
                         
                         if not resume_embedding:
-                            logger.warning(f"   ⚠️ Resume {resume_id} has no embedding, skipping")
                             continue
                         
-                        # Extract candidate information
+                        # Handle parsed_data JSON string
+                        if isinstance(parsed_data, str):
+                            try:
+                                parsed_data = json.loads(parsed_data)
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+                        
+                        # Fast cosine similarity calculation
+                        similarity_score = cosine_similarity(
+                            np.array(job_embedding).reshape(1, -1),
+                            np.array(resume_embedding).reshape(1, -1)
+                        )[0][0]
+                        
+                        # Get candidate data for logging
                         candidate_name = parsed_data.get('Name', 'Unknown')
                         candidate_skills = parsed_data.get('Skills', [])
-                        candidate_summary = parsed_data.get('Summary', '')
-                        candidate_experience = parsed_data.get('TotalExperience', '')
-                        
-                        # 🚀 100% GPT-Powered Hybrid Analysis for Maximum Accuracy
-                        logger.info(f"🧠 Starting 100% GPT-Powered analysis for candidate {candidate_name}")
-                        
-                        # Step 1: Generate embeddings using GPT (if not available)
-                        if not job_embedding or not resume_embedding:
-                            logger.warning(f"   ⚠️ Missing embeddings, generating with GPT...")
-                            # This would call GPT to generate embeddings
-                            # For now, we'll use existing embeddings
-                        
-                        # Step 2: Calculate pure embedding similarity (mathematical foundation)
-                        embedding_score = await calculate_pure_semantic_similarity(job_embedding, resume_embedding)
-                        logger.info(f"   📊 Pure embedding similarity: {embedding_score:.3f}")
-                        
-                        # Step 3: GPT-Powered Deep Semantic Analysis (100% AI-driven)
-                        logger.info(f"   🧠 Running GPT semantic analysis...")
-                        
-                        # Convert job skills from string to list if needed
-                        job_skills_for_analysis = job.get('requiredSkills', [])
-                        if isinstance(job_skills_for_analysis, str):
-                            job_skills_for_analysis = [skill.strip() for skill in job_skills_for_analysis.split(',')]
-                        
-                        # Step 3: Comprehensive GPT-Powered Analysis (100% AI-driven, no hardcoding)
-                        logger.info(f"   🧠 Running comprehensive GPT analysis...")
-                        
-                        # Get all GPT scores using the new optimized functions
-                        gpt_skills_score = await analyze_skills_with_gpt_optimized(
-                            job_skills_for_analysis, candidate_skills, job_title, job.get('industry', '')
-                        )
-                        
-                        gpt_experience_score = await analyze_experience_with_gpt_optimized(
-                            job.get('experienceLevel', ''), candidate_experience, job_title
-                        )
-                        
-                        gpt_text_score = await analyze_text_similarity_with_gpt(
-                            job.get('description', ''), candidate_summary, job_title
-                        )
-                        
-                        # Get location, department, and salary scores
-                        job_location = computed_job_location
-                        candidate_location = extract_candidate_location(parsed_data)
-                        work_type = job.get('workType', 'ONSITE')
-                        
-                        gpt_location_score = await analyze_location_match_with_gpt(
-                            job_location, candidate_location, job_title, work_type
-                        )
-                        
-                        gpt_department_score = await analyze_department_match_with_gpt(
-                            job.get('department', ''), candidate_skills, candidate_experience, job_title
-                        )
-                        
-                        gpt_salary_score = await analyze_salary_match_with_gpt(
-                            job.get('salaryMin', 0), job.get('salaryMax', 0), candidate_experience, job_title, job.get('industry', '')
-                        )
-                        
-                        # Create comprehensive GPT analysis object
-                        gpt_analysis = {
-                            'skills_match': gpt_skills_score,
-                            'experience_fit': gpt_experience_score,
-                            'text_similarity': gpt_text_score,
-                            'location_score': gpt_location_score,
-                            'department_score': gpt_department_score,
-                            'salary_score': gpt_salary_score,
-                            'overall_semantic_match': (gpt_skills_score + gpt_experience_score + gpt_text_score) / 3
-                        }
-                        
-                        logger.info(f"   ✅ Comprehensive GPT Analysis Results:")
-                        logger.info(f"      - Skills Match: {gpt_skills_score:.3f}")
-                        logger.info(f"      - Experience Fit: {gpt_experience_score:.3f}")
-                        logger.info(f"      - Text Similarity: {gpt_text_score:.3f}")
-                        logger.info(f"      - Location Score: {gpt_location_score:.3f}")
-                        logger.info(f"      - Department Score: {gpt_department_score:.3f}")
-                        logger.info(f"      - Salary Score: {gpt_salary_score:.3f}")
-                        
-                        # Step 4: Hybrid Score Calculation (75% GPT + 25% Embeddings)
-                        gpt_weight = 0.75
-                        embedding_weight = 0.25
-                        
-                        # GPT component (75%) - Comprehensive analysis
-                        gpt_component = (
-                            gpt_skills_score * 0.35 +      # Skills analysis (35%)
-                            gpt_experience_score * 0.20 +  # Experience analysis (20%)
-                            gpt_location_score * 0.10 +    # Location analysis (10%)
-                            gpt_department_score * 0.05 +  # Department analysis (5%)
-                            gpt_salary_score * 0.05        # Salary analysis (5%)
-                        )
-                        
-                        # Embedding component (25%) - Mathematical similarity
-                        embedding_component = embedding_score * embedding_weight
-                        
-                        # Final hybrid score
-                        final_score = gpt_component + embedding_component
-                        
-                        # Ensure score is within bounds
-                        final_score = max(0.0, min(1.0, final_score))
-                        
-                        logger.info(f"   🎯 Final Hybrid Score: {final_score:.3f}")
-                        logger.info(f"      - GPT Component: {gpt_component:.3f} (75%)")
-                        logger.info(f"      - Embedding Component: {embedding_component:.3f} (25%)")
+                        candidate_experience = parsed_data.get('TotalExperience', 'Unknown')
                         
                         # Only include candidates above minimum score
-                        if final_score >= min_score:
-                            logger.info(f"✅ Candidate {candidate_name} PASSED filter (Score: {final_score:.3f} >= {min_score})")
-                        else:
-                            logger.info(f"❌ Candidate {candidate_name} FILTERED OUT (Score: {final_score:.3f} < {min_score})")
-                            continue
-                        
-                        if final_score >= min_score:
-                            # Convert job skills from string to list if needed
-                            job_skills_for_explanation = job.get('requiredSkills', [])
-                            if isinstance(job_skills_for_explanation, str):
-                                job_skills_for_explanation = [skill.strip() for skill in job_skills_for_explanation.split(',')]
+                        if similarity_score >= min_score:
                             
-                            # Generate GPT explanation
-                            explanation_request = GPTExplanationRequest(
-                                job_title=job_title,
-                                job_requirements=job.get('description', ''),
-                                job_skills=job_skills_for_explanation,
-                                candidate_skills=candidate_skills,
-                                candidate_experience=candidate_experience,
-                                candidate_location=parsed_data.get('Location') or parsed_data.get('Address', 'Unknown'),
-                                semantic_score=gpt_analysis['overall_semantic_match'],
-                                similarity_score=embedding_score,
-                                overall_score=final_score
+                            # Generate full URLs for resume access
+                            resume_download_url = f"http://158.220.127.100:8000/api/v1/download/resume/{resume_id}"
+                            parsed_resume_url = f"http://158.220.127.100:8000/api/v1/resumes/{resume_id}/parsed-data"
+                            job_details_url = f"http://158.220.127.100:3000/job/{job_id}"  # Frontend job details page
+                            
+                            # Get hardcoded explanations (fast, no GPT calls)
+                            skills_explanation = get_skills_explanation(
+                                similarity_score, 
+                                job.get('requiredSkills', ''), 
+                                candidate_skills if isinstance(candidate_skills, list) else [candidate_skills]
                             )
                             
-                            explanation = await generate_gpt_explanation(explanation_request)
+                            experience_explanation = get_experience_explanation(
+                                similarity_score,
+                                job.get('experienceLevel', ''),
+                                candidate_experience
+                            )
+                            
+                            overall_explanation = get_overall_explanation(
+                                similarity_score,
+                                job_title,
+                                candidate_name
+                            )
+                            
+                            fit_status = get_fit_status(similarity_score)
                             
                             candidate_data = {
-                                "resume_id": resume_id,
+                                "candidate_id": resume_id,
+                                "job_id": job_id,
                                 "candidate_name": candidate_name,
-                                "candidate_email": resume.get('candidate_email', ''),
-                                "total_experience": resume.get('total_experience', ''),
-                                "filename": resume.get('filename', ''),
-                                "match_score": final_score,
-                                "gpt_semantic_score": gpt_analysis.get('overall_semantic_match', 0),
-                                "embedding_score": embedding_score,
-                                "gpt_analysis": gpt_analysis,
-                                "gpt_skills_score": gpt_skills_score,
-                                "gpt_experience_score": gpt_experience_score,
-                                "gpt_location_score": gpt_location_score,
-                                "gpt_department_score": gpt_department_score,
-                                "gpt_salary_score": gpt_salary_score,
-                                "explanation": explanation,
-                                "scoring_method": "🚀 100% GPT-Powered Hybrid Analysis (75% GPT + 25% Embeddings) - Zero Hardcoding",
-                                "skills": candidate_skills,
-                                "summary": candidate_summary,
-                                "candidate_data": parsed_data,
-                                "hybrid_breakdown": {
-                                    "gpt_component": gpt_component,
-                                    "embedding_component": embedding_component,
-                                    "gpt_weight": gpt_weight,
-                                    "embedding_weight": embedding_weight
-                                }
+                                "experience": candidate_experience,
+                                "skills": candidate_skills if isinstance(candidate_skills, list) else [candidate_skills],
+                                "location": extract_candidate_location(parsed_data),
+                                "skills_matched_score": {
+                                    "score": round(similarity_score, 3),
+                                    "explanation": skills_explanation
+                                },
+                                "experience_score": {
+                                    "score": round(similarity_score, 3),
+                                    "explanation": experience_explanation
+                                },
+                                "overall_score": {
+                                    "score": round(similarity_score, 3),
+                                    "explanation": overall_explanation,
+                                    "fit_status": fit_status
+                                },
+                                "parsed_url": parsed_resume_url,
+                                "resume_download_url": resume_download_url,
+                                "job_details_url": job_details_url
                             }
                             
                             job_candidates.append(candidate_data)
@@ -1469,144 +1305,61 @@ async def get_all_matched_data(
                         logger.error(f"Error processing resume {resume.get('id', 'unknown')}: {str(e)}")
                         continue
                 
-                # Sort candidates by match score (highest first)
-                job_candidates.sort(key=lambda x: x['match_score'], reverse=True)
+                # Sort candidates by overall score (highest first)
+                job_candidates.sort(key=lambda x: x['overall_score']['score'], reverse=True)
                 
                 # Add job summary
                 job_summary = {
-                    "job_id": int(job_id),
                     "job_title": str(job_title),
                     "company": str(company),
+                    "experience_level": str(job.get('experienceLevel', '')),
                     "candidates_count": int(len(job_candidates))
                 }
                 
-                # Determine job location (outside of dict literal to avoid syntax errors)
-                job_location = computed_job_location
-                logger.info(f"🔍 Job {job_title}: Setting location to '{job_location}' (fullLocation='{job.get('fullLocation', 'N/A')}')")
-
-                # Add job with candidates
+                # Add job with candidates - exact structure you requested
                 job_candidates_data = {
-                    "job_id": int(job_id),
-                    "job_details": {
-                        "title": str(job_title),
-                        "company": str(company),
-                        "department": str(job.get('department', '')),
-                        "experienceLevel": str(job.get('experienceLevel', '')),
-                        "location": job_location,
-                        "workType": str(job.get('workType', '')),
-                        "salaryRange": {
-                            "min": int(job.get('salaryMin', 0)) if job.get('salaryMin') else 0,
-                            "max": int(job.get('salaryMax', 0)) if job.get('salaryMax') else 0
-                        },
-                        "description": str(job.get('description', '')),
-                        "requirements": str(job.get('requirements', '')),
-                        "requiredSkills": str(job.get('requiredSkills', ''))
-                    },
-                    "total_candidates": int(len(job_candidates)),
-                    "candidates_count": int(len(job_candidates)),
-                    "candidates": []
+                    "job_title": str(job_title),
+                    "company": str(company),
+                    "experience_level": str(job.get('experienceLevel', '')),
+                    "skills": str(job.get('requiredSkills', '')),
+                    "location": str(job.get('fullLocation', '') or f"{job.get('city', '')}, {job.get('country', '')}".strip(', ')),
+                    "candidates_count": len(job_candidates),
+                    "candidates": job_candidates
                 }
-                
-                # Convert candidates to simple format
-                for candidate in job_candidates:
-                    # Convert numpy types to Python types
-                    match_score = float(candidate.get('match_score', 0))
-                    gpt_skills_score = float(candidate.get('gpt_skills_score', 0))
-                    gpt_experience_score = float(candidate.get('gpt_experience_score', 0))
-                    gpt_semantic_score = float(candidate.get('gpt_semantic_score', 0))
-                    
-                    simple_candidate = {
-                        "candidate_id": int(candidate.get('resume_id', 0)),
-                        "candidate_name": str(candidate.get('candidate_name', '')),
-                        "candidate_email": str(candidate.get('candidate_email', '')),
-                        "location": str(extract_candidate_location(candidate.get('candidate_data', {}))),
-                        "total_experience": str(candidate.get('total_experience', '')),
-                        "skills": list(candidate.get('skills', [])),
-                        "resume_url": f"/api/v1/resumes/{candidate.get('resume_id')}/download",
-                        "parsed_data_url": f"/api/v1/resumes/{candidate.get('resume_id')}/parsed-data",
-                        "filename": str(candidate.get('filename', '')),
-                        "created_at": str(candidate.get('candidate_data', {}).get('created_at', '')),
-                        "matching_score": {
-                            "overall_matching_score": {
-                                "score": match_score,
-                                "percentage": round(match_score * 100, 1),
-                                "rating": "Good" if match_score >= 0.7 else "Fair" if match_score >= 0.4 else "Poor",
-                                "explanation": str(candidate.get('explanation', '')),
-                                "is_good_match": bool(match_score >= 0.7)
-                            },
-                            "skills_match": {
-                                "score": gpt_skills_score,
-                                "percentage": round(gpt_skills_score * 100, 1),
-                                "rating": "Excellent" if gpt_skills_score >= 0.8 else "Good" if gpt_skills_score >= 0.6 else "Fair" if gpt_skills_score >= 0.4 else "Poor",
-                                "explanation": generate_skills_explanation(job, candidate.get('candidate_data', {}), gpt_skills_score),
-                                "weight": "40%"
-                            },
-                            "experience_match": {
-                                "score": gpt_experience_score,
-                                "percentage": round(gpt_experience_score * 100, 1),
-                                "rating": "Excellent" if gpt_experience_score >= 0.8 else "Good" if gpt_experience_score >= 0.6 else "Fair" if gpt_experience_score >= 0.4 else "Poor",
-                                "explanation": generate_experience_explanation(job, candidate.get('candidate_data', {}), gpt_experience_score),
-                                "weight": "25%"
-                            },
-                            "location_match": {
-                                "score": float(candidate.get('gpt_location_score', 0.5)),
-                                "percentage": round(candidate.get('gpt_location_score', 0.5) * 100, 1),
-                                "rating": get_rating(candidate.get('gpt_location_score', 0.5)),
-                                "explanation": generate_location_explanation_optimized(job, candidate.get('candidate_data', {}), candidate.get('gpt_location_score', 0.5)),
-                                "weight": "15%"
-                            },
-                            "department_match": {
-                                "score": float(candidate.get('gpt_department_score', 0.5)),
-                                "percentage": round(candidate.get('gpt_department_score', 0.5) * 100, 1),
-                                "rating": get_rating(candidate.get('gpt_department_score', 0.5)),
-                                "explanation": generate_department_explanation_optimized(job, candidate.get('candidate_data', {}), candidate.get('gpt_department_score', 0.5)),
-                                "weight": "10%"
-                            },
-                            "salary_match": {
-                                "score": float(candidate.get('gpt_salary_score', 0.5)),
-                                "percentage": round(candidate.get('gpt_salary_score', 0.5) * 100, 1),
-                                "rating": get_rating(candidate.get('gpt_salary_score', 0.5)),
-                                "explanation": generate_salary_explanation_optimized(job, candidate.get('candidate_data', {}), candidate.get('gpt_salary_score', 0.5)),
-                                "weight": "10%"
-                            },
-                            "job_description_match": {
-                                "rating": "Good" if gpt_semantic_score >= 0.6 else "Fair",
-                                "percentage": round(gpt_semantic_score * 100, 1),
-                                "explanation": str(generate_job_description_explanation(job, candidate.get('candidate_data', {}), gpt_semantic_score))
-                            }
-                        }
-                    }
-                    job_candidates_data["candidates"].append(simple_candidate)
                 
                 all_jobs_matches.append(job_summary)
                 all_jobs_candidates.append(job_candidates_data)
                 
                 total_candidates += len(job_candidates)
                 
-                logger.info(f"✅ Job {job_title}: Found {len(job_candidates)} candidates")
+                logger.info(f"✅ Job {job_title}: Found {len(job_candidates)} candidates (similarity search)")
                 
             except Exception as e:
                 logger.error(f"Error processing job {job.get('id')}: {str(e)}")
                 all_jobs_matches.append({
-                    "job_id": job.get('id'),
                     "job_title": job.get('title', 'Unknown'),
                     "company": job.get('company', 'Unknown'),
-                    "status": "Error",
+                    "experience_level": job.get('experienceLevel', ''),
                     "candidates_count": 0,
                     "candidates": [],
                     "error": str(e)
                 })
                 continue
         
-        logger.info(f"🎉 All matched data completed! Found {total_candidates} total candidates across {len(all_jobs_matches)} jobs")
+        logger.info(f"🎉 FAST matching completed! Found {total_candidates} total candidates across {len(all_jobs_matches)} jobs")
+        logger.info(f"📊 Summary: {len(all_jobs)} jobs processed, {len(all_resumes)} resumes checked, {total_candidates} matches found")
         
         return {
             "success": True,
             "total_jobs": len(all_jobs_matches),
             "total_candidates": total_candidates,
-            "jobs_summary": all_jobs_matches,
-            "jobs_candidates": all_jobs_candidates,
-            "message": "Analysis complete for all candidates, all scores in percentage form (0-100). Feedback provided on skills, experience, department, and salary compatibility."
+            "jobs": all_jobs_candidates,
+            "debug_info": {
+                "jobs_processed": len(all_jobs),
+                "resumes_checked": len(all_resumes),
+                "min_score_threshold": min_score,
+                "matching_method": "Pure Embedding Similarity Search"
+            }
         }
         
     except Exception as e:
@@ -2262,19 +2015,24 @@ def get_rating(score: float) -> str:
 
 # REMOVED: test-locations endpoint - keeping only 2 essential APIs
 
-# OPTIMIZED: New endpoint using GPT-4o-mini + Embeddings (zero hardcoding)
-@router.get("/candidates-matching/job/{job_id}/candidates-optimized")
-async def get_candidates_for_job_optimized(
+# FAST: Single job matching using pure embeddings (100% similarity search)
+@router.get("/candidates-matching/job/{job_id}/candidates-fast")
+async def get_candidates_for_job_fast(
     job_id: int, 
-    min_score: float = Query(default=0.0, description="Minimum match score threshold")
+    min_score: float = Query(default=0.1, description="Minimum match score threshold (default: 0.1)")
 ):
     """
-    Get matching candidates using OPTIMIZED HYBRID approach:
-    - GPT-4o-mini for skills/experience/text analysis (70%)
-    - Embeddings for semantic similarity (30%)
-    - ZERO hardcoded values - everything done by LLM
+    Get matching candidates for a specific job using FAST PURE EMBEDDINGS approach:
+    - 100% Cosine similarity between job and resume embeddings
+    - No GPT calls - pure mathematical similarity search
+    - Fast and cost-effective
+    - Same method as all-matches but for single job
     """
     try:
+        logger.info(f"🚀 FAST: Getting candidates for job {job_id} using PURE EMBEDDING SIMILARITY")
+        logger.info(f"   🎯 Minimum score: {min_score}")
+        logger.info(f"   ⚡ Method: Pure cosine similarity (no GPT calls)")
+        
         # Get job data and embedding
         job_data = await database_service.get_job_by_id(job_id)
         if not job_data:
@@ -2285,9 +2043,11 @@ async def get_candidates_for_job_optimized(
             raise HTTPException(status_code=400, detail="Job has no embeddings")
         
         # Get all resumes with embeddings
-        all_resumes = await database_service.get_all_resumes_with_embeddings(limit=1000)
+        all_resumes = await database_service.get_all_resumes_with_embeddings(limit=1000000)
         if not all_resumes:
             raise HTTPException(status_code=404, detail="No resumes with embeddings found")
+        
+        logger.info(f"📊 Found {len(all_resumes)} resumes with embeddings")
         
         candidates = []
         
@@ -2307,32 +2067,69 @@ async def get_candidates_for_job_optimized(
                     except (json.JSONDecodeError, TypeError):
                         continue
                 
-                # Calculate hybrid score using GPT-4o-mini + Embeddings (ZERO hardcoding)
-                match_result = await calculate_hybrid_match_score_optimized(
-                    job_embedding, resume_embedding, job_data, parsed_data
-                )
-                
-                final_score = match_result['overall_score']
+                # Fast cosine similarity calculation (same as all-matches)
+                similarity_score = cosine_similarity(
+                    np.array(job_embedding).reshape(1, -1),
+                    np.array(resume_embedding).reshape(1, -1)
+                )[0][0]
                 
                 # Only include candidates above minimum score
-                if final_score >= min_score:
+                if similarity_score >= min_score:
+                    # Get candidate data
+                    candidate_name = parsed_data.get('Name', 'Unknown')
+                    candidate_skills = parsed_data.get('Skills', [])
+                    candidate_experience = parsed_data.get('TotalExperience', 'Unknown')
+                    
+                    # Generate full URLs for resume access
+                    resume_download_url = f"http://158.220.127.100:8000/api/v1/download/resume/{resume_id}"
+                    parsed_resume_url = f"http://158.220.127.100:8000/api/v1/resumes/{resume_id}/parsed-data"
+                    job_details_url = f"http://158.220.127.100:3000/job/{job_id}"  # Frontend job details page
+                    
+                    # Get hardcoded explanations (fast, no GPT calls)
+                    skills_explanation = get_skills_explanation(
+                        similarity_score, 
+                        job_data.get('requiredSkills', ''), 
+                        candidate_skills if isinstance(candidate_skills, list) else [candidate_skills]
+                    )
+                    
+                    experience_explanation = get_experience_explanation(
+                        similarity_score,
+                        job_data.get('experienceLevel', ''),
+                        candidate_experience
+                    )
+                    
+                    overall_explanation = get_overall_explanation(
+                        similarity_score,
+                        job_data.get('title', 'Unknown'),
+                        candidate_name
+                    )
+                    
+                    fit_status = get_fit_status(similarity_score)
+                    
                     candidates.append({
-                        "resume_id": resume_id,
-                        "candidate_name": parsed_data.get('Name', 'Unknown'),
+                        "candidate_id": resume_id,
+                        "job_id": job_id,
+                        "candidate_name": candidate_name,
                         "candidate_email": resume.get('candidate_email', ''),
-                        "match_score": final_score,
-                        "embedding_score": match_result['embedding_score'],
-                        "gpt_skills_score": match_result['gpt_skills_score'],
-                        "gpt_experience_score": match_result['gpt_experience_score'],
-                        "gpt_text_score": match_result['gpt_text_score'],
-                        "gpt_location_score": match_result['gpt_location_score'],
-                        "gpt_department_score": match_result['gpt_department_score'],
-                        "gpt_salary_score": match_result['gpt_salary_score'],
-                        "gpt_component": match_result['gpt_component'],
-                        "embedding_component": match_result['embedding_component'],
-                        "scoring_method": match_result['scoring_method'],
-                        "skills": parsed_data.get('Skills', []),
-                        "summary": parsed_data.get('Summary', ''),
+                        "experience": candidate_experience,
+                        "skills": candidate_skills if isinstance(candidate_skills, list) else [candidate_skills],
+                        "location": extract_candidate_location(parsed_data),
+                        "skills_matched_score": {
+                            "score": round(similarity_score, 3),
+                            "explanation": skills_explanation
+                        },
+                        "experience_score": {
+                            "score": round(similarity_score, 3),
+                            "explanation": experience_explanation
+                        },
+                        "overall_score": {
+                            "score": round(similarity_score, 3),
+                            "explanation": overall_explanation,
+                            "fit_status": fit_status
+                        },
+                        "parsed_url": parsed_resume_url,
+                        "resume_download_url": resume_download_url,
+                        "job_details_url": job_details_url,
                         "candidate_data": parsed_data
                     })
                 
@@ -2341,22 +2138,33 @@ async def get_candidates_for_job_optimized(
                 continue
         
         # Sort by score (highest first)
-        candidates.sort(key=lambda x: x['match_score'], reverse=True)
+        candidates.sort(key=lambda x: x['overall_score']['score'], reverse=True)
+        
+        logger.info(f"🎉 FAST matching completed! Found {len(candidates)} candidates for job {job_id}")
         
         return {
             "success": True,
             "job_id": job_id,
             "job_title": job_data.get('title', 'Unknown'),
+            "company": job_data.get('company', 'Unknown'),
+            "experience_level": job_data.get('experienceLevel', ''),
+            "skills": job_data.get('requiredSkills', ''),
+            "location": job_data.get('fullLocation', '') or f"{job_data.get('city', '')}, {job_data.get('country', '')}".strip(', '),
             "total_candidates": len(candidates),
             "min_score_threshold": min_score,
             "candidates": candidates,
+            "debug_info": {
+                "matching_method": "Pure Embedding Similarity Search",
+                "resumes_checked": len(all_resumes),
+                "min_score_threshold": min_score
+            },
             "message": f"Found {len(candidates)} candidates matching job {job_id} with minimum score {min_score}"
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in optimized candidate matching: {str(e)}")
+        logger.error(f"Error in fast candidate matching: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get candidates: {str(e)}")
 
 # REMOVED: Health check endpoint - keeping only 3 essential APIs

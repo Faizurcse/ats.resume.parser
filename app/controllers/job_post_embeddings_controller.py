@@ -38,24 +38,6 @@ class UpdateJobEmbeddingResponse(BaseModel):
     embedding_size: int
     was_edited: bool
 
-class JobEmbeddingData(BaseModel):
-    """Model for individual job embedding data."""
-    id: int
-    title: str
-    company: str
-    department: str = None
-    created_at: str = None
-    updated_at: str = None
-    embedding_size: int
-    sample_embedding: List[float] = None
-
-class GetAllEmbeddingsResponse(BaseModel):
-    """Response model for getting all job embeddings."""
-    success: bool
-    total_jobs: int
-    total_dimensions: int
-    average_dimensions: float
-    jobs: List[JobEmbeddingData]
 
 @router.post("/start-embedding", response_model=StartEmbeddingResponse)
 async def start_job_embeddings(request: StartEmbeddingRequest):
@@ -192,80 +174,6 @@ async def start_job_embeddings(request: StartEmbeddingRequest):
             detail=f"Failed to start job embeddings: {str(e)}"
         )
 
-@router.get("/all-embeddings", response_model=GetAllEmbeddingsResponse)
-async def get_all_job_embeddings(limit: int = 100):
-    """
-    Get all job post embeddings with detailed information.
-    
-    Args:
-        limit: Maximum number of jobs to return (default: 100, max: 1000)
-        
-    Returns:
-        GetAllEmbeddingsResponse with all job embeddings data
-    """
-    try:
-        # Validate limit
-        if limit > 1000:
-            limit = 1000
-        elif limit < 1:
-            limit = 100
-        
-        logger.info(f"🔍 RETRIEVING ALL JOB POST EMBEDDINGS")
-        logger.info(f"   📊 Limit: {limit}")
-        logger.info(f"   {'='*60}")
-        
-        # Get all jobs with embeddings
-        embeddings_result = await job_embedding_service.show_all_job_embeddings(limit)
-        
-        if not embeddings_result["success"]:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to retrieve embeddings: {embeddings_result['error']}"
-            )
-        
-        # Transform the data to match our response model
-        jobs_data = []
-        for job in embeddings_result["jobs"]:
-            embedding = job.get('embedding', [])
-            embedding_size = len(embedding) if isinstance(embedding, list) else 0
-            
-            # Get sample embedding (first 5 values)
-            sample_embedding = embedding[:5] if isinstance(embedding, list) and len(embedding) > 0 else None
-            
-            job_data = JobEmbeddingData(
-                id=job.get('id'),
-                title=job.get('title', 'Unknown Title'),
-                company=job.get('company', 'Unknown Company'),
-                department=job.get('department'),
-                created_at=str(job.get('created_at')) if job.get('created_at') else None,
-                updated_at=str(job.get('updated_at')) if job.get('updated_at') else None,
-                embedding_size=embedding_size,
-                sample_embedding=sample_embedding
-            )
-            jobs_data.append(job_data)
-        
-        logger.info(f"📊 RETRIEVED {len(jobs_data)} JOBS WITH EMBEDDINGS")
-        logger.info(f"   📏 Total Dimensions: {embeddings_result['total_dimensions']}")
-        logger.info(f"   📊 Average Dimensions: {embeddings_result['average_dimensions']:.1f}")
-        logger.info(f"   {'='*60}")
-        
-        return GetAllEmbeddingsResponse(
-            success=True,
-            total_jobs=embeddings_result['total_jobs'],
-            total_dimensions=embeddings_result['total_dimensions'],
-            average_dimensions=embeddings_result['average_dimensions'],
-            jobs=jobs_data
-        )
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
-    except Exception as e:
-        logger.error(f"❌ Error retrieving job embeddings: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve job embeddings: {str(e)}"
-        )
 
 @router.get("/summary")
 async def get_embeddings_summary():
@@ -353,32 +261,6 @@ async def update_job_embedding(request: UpdateJobEmbeddingRequest):
             detail=f"Failed to update job embedding: {str(e)}"
         )
 
-@router.post("/regenerate-all-embeddings")
-async def regenerate_all_job_embeddings():
-    """
-    Regenerate all job embeddings using OpenAI's text-embedding-ada-002 model.
-    This fixes the dimension mismatch issue where jobs had 100-dim embeddings
-    while resumes have 1536-dim embeddings.
-    """
-    try:
-        logger.info("🔄 REGENERATING ALL JOB EMBEDDINGS")
-        logger.info("   🎯 Fixing dimension mismatch (100 → 1536 dimensions)")
-        
-        result = await job_embedding_service.regenerate_all_job_embeddings()
-        
-        if result["success"]:
-            return result
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to regenerate embeddings: {result.get('error', 'Unknown error')}"
-            )
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in regenerate all embeddings: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Regeneration failed: {str(e)}")
 
 @router.get("/health")
 async def health_check():
@@ -389,9 +271,7 @@ async def health_check():
         "endpoints": {
             "start_embedding": "POST /start-embedding",
             "update_job_embedding": "POST /update-job-embedding",
-            "all_embeddings": "GET /all-embeddings",
-            "summary": "GET /summary",
-            "regenerate_all_embeddings": "POST /regenerate-all-embeddings"
+            "summary": "GET /summary"
         }
     }
 
