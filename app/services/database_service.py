@@ -71,8 +71,8 @@ class DatabaseService:
                 logger.info("🔗 Using DATABASE_URL from environment variables")
                 self.pool = await asyncpg.create_pool(
                     database_url,
-                    min_size=2,  # Increased minimum connections
-                    max_size=20,  # Increased maximum connections
+                    min_size=10,  # Increased minimum connections for better performance
+                    max_size=100,  # Increased maximum connections for more concurrent users
                     command_timeout=60,  # Increased timeout
                     server_settings={
                         'application_name': 'resume_parser_python'
@@ -81,11 +81,11 @@ class DatabaseService:
             else:
                 # Fallback to hardcoded connection parameters
                 logger.info("⚠️  DATABASE_URL not set, using hardcoded database connection")
-                host = "147.93.155.233"
+                host = "158.220.127.100"
                 port = 5432
-                user = "root"
-                password = "Ai_ats@2000"
-                database = "ai_ats"
+                user = "postgres"
+                password = "ai_ats@123"
+                database = "AI-ats"
                 
                 self.pool = await asyncpg.create_pool(
                     host=host,
@@ -94,8 +94,8 @@ class DatabaseService:
                     password=password,
                     database=database,
                     ssl=False,
-                    min_size=2,  # Increased minimum connections
-                    max_size=20,  # Increased maximum connections
+                    min_size=10,  # Increased minimum connections for better performance
+                    max_size=100,  # Increased maximum connections for more concurrent users
                     command_timeout=60,  # Increased timeout
                     server_settings={
                         'application_name': 'resume_parser_python'
@@ -1210,6 +1210,27 @@ class DatabaseService:
             logger.error(f"Error updating resume embedding column for resume {resume_id}: {str(e)}")
             raise Exception(f"Failed to update resume embedding column: {str(e)}")
 
+    async def update_resume_embedding_error(self, resume_id: int, error_message: str) -> bool:
+        """Update the embedding error column in the resume table."""
+        try:
+            pool = await self._get_pool()
+            async with pool.acquire() as conn:
+                result = await conn.execute('''
+                    UPDATE resume_data 
+                    SET embedding_error = $1 
+                    WHERE id = $2
+                ''', error_message, resume_id)
+                
+                if result == "UPDATE 1":
+                    logger.info(f"Resume embedding error updated for resume ID: {resume_id}")
+                    return True
+                else:
+                    logger.warning(f"Resume with ID {resume_id} not found for embedding error update")
+                    return False
+        except Exception as e:
+            logger.error(f"Error updating resume embedding error for resume {resume_id}: {str(e)}")
+            raise Exception(f"Failed to update resume embedding error: {str(e)}")
+
     async def get_resume_embedding(self, resume_id: int) -> Optional[List[float]]:
         """Get embedding from the separate embedding column."""
         try:
@@ -1489,3 +1510,6 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Error getting jobs without embeddings: {str(e)}")
             return []
+
+# Create service instance
+database_service = DatabaseService()

@@ -175,54 +175,54 @@ class StartupStatusService:
             await asyncio.wait_for(self.db_service._get_pool(), timeout=10.0)
             
             logger.info("   ✅ Database: CONNECTED SUCCESSFULLY")
-            logger.info("   🏢 Host: 147.93.155.233:5432")
-            logger.info("   🗄️  Database: ai_ats")
-            logger.info("   👤 User: root")
+            logger.info("   🏢 Host: 158.220.127.100:5432")
+            logger.info("   🗄️  Database: AI-ats")
+            logger.info("   👤 User: postgres")
             logger.info("   🔌 Connection Pool: Active")
             logger.info("   📊 Tables: resume_data, Ats_JobPost")
             logger.info("   " + "─"*50)
             
             status_report["components"]["database"] = {
                 "status": "✅ CONNECTED",
-                "host": "147.93.155.233",
+                "host": "158.220.127.100",
                 "port": 5432,
-                "database": "ai_ats",
-                "user": "root",
+                "database": "AI-ats",
+                "user": "postgres",
                 "connection_pool": "Active",
                 "tables": ["resume_data", "Ats_JobPost"]
             }
             
         except asyncio.TimeoutError:
             logger.warning("   ⚠️  Database Connection: TIMEOUT (10s)")
-            logger.info("   🏢 Host: 147.93.155.233:5432")
-            logger.info("   🗄️  Database: ai_ats")
-            logger.info("   👤 User: root")
+            logger.info("   🏢 Host: 158.220.127.100:5432")
+            logger.info("   🗄️  Database: AI-ats")
+            logger.info("   👤 User: postgres")
             logger.info("   ⚠️  Connection may be slow - server will start anyway")
             logger.info("   " + "─"*50)
             
             status_report["components"]["database"] = {
                 "status": "⚠️ TIMEOUT",
-                "host": "147.93.155.233",
+                "host": "158.220.127.100",
                 "port": 5432,
-                "database": "ai_ats",
-                "user": "root",
+                "database": "AI-ats",
+                "user": "postgres",
                 "warning": "Connection timeout - server will start anyway"
             }
             
         except Exception as e:
             logger.error(f"   ❌ Database Connection Failed: {str(e)}")
-            logger.info("   🏢 Host: 147.93.155.233:5432")
-            logger.info("   🗄️  Database: ai_ats")
-            logger.info("   👤 User: root")
+            logger.info("   🏢 Host: 158.220.127.100:5432")
+            logger.info("   🗄️  Database: AI-ats")
+            logger.info("   👤 User: postgres")
             logger.info("   ⚠️  Server will start but database features may not work")
             logger.info("   " + "─"*50)
             
             status_report["components"]["database"] = {
                 "status": "❌ CONNECTION FAILED",
-                "host": "147.93.155.233",
+                "host": "158.220.127.100",
                 "port": 5432,
-                "database": "ai_ats",
-                "user": "root",
+                "database": "AI-ats",
+                "user": "postgres",
                 "error": str(e),
                 "warning": "Database features may not work"
             }

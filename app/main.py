@@ -8,6 +8,9 @@ import asyncio
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import time
 
 from app.config.settings import settings
@@ -27,6 +30,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Initialize rate limiter for 1000+ users
+limiter = Limiter(key_func=get_remote_address)
+
 # Create FastAPI application
 app = FastAPI(
     title=settings.APP_NAME,
@@ -36,6 +42,10 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json"
 )
+
+# Add rate limiter exception handler for 1000+ users
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Configure response size limits
 from fastapi.middleware.gzip import GZipMiddleware
@@ -224,7 +234,7 @@ async def test_openai_api():
             }
 
 # Include routers
-app.include_router(resume_router)
+app.include_router(resume_router)  # Enhanced with queue-based processing for 1000+ users
 app.include_router(job_posting_router)
 app.include_router(download_resume_router)
 app.include_router(job_post_embeddings_router)

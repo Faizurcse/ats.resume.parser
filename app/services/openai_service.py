@@ -642,3 +642,6 @@ Return the parsed data in this exact JSON format:
         except Exception as e:
             logger.error(f"Error generating embedding: {str(e)}")
             return None
+
+# Create service instance
+openai_service = OpenAIService()
