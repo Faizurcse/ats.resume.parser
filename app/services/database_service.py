@@ -713,6 +713,30 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Error deleting resume {resume_id}: {str(e)}")
             raise Exception(f"Failed to delete resume data: {str(e)}")
+
+    async def delete_all_resumes(self) -> int:
+        """
+        Delete all resume records.
+        
+        Returns:
+            int: Number of deleted records
+        """
+        try:
+            pool = await self._get_pool()
+            
+            async with pool.acquire() as conn:
+                result = await conn.execute('''
+                    DELETE FROM resume_data
+                ''')
+                
+                # Extract number from result string like "DELETE 5"
+                deleted_count = int(result.split()[-1]) if result.startswith("DELETE") else 0
+                logger.info(f"Deleted {deleted_count} resume records")
+                return deleted_count
+                
+        except Exception as e:
+            logger.error(f"Error deleting all resumes: {str(e)}")
+            raise Exception(f"Failed to delete all resume data: {str(e)}")
     
     async def get_unique_resumes_for_download(self) -> List[Dict[str, Any]]:
         """

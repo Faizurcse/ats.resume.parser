@@ -66,6 +66,12 @@ class AsyncResumeProcessor:
             
             logger.info(f"🔄 Processing job {job_id}: {filename}")
             
+            # Check if job was cancelled before processing
+            job_status = await queue_service.get_job_status(job_id)
+            if job_status.get("status") == "cancelled":
+                logger.info(f"⏭️ Skipping cancelled job {job_id}: {filename}")
+                continue
+            
             # Update status to processing
             await queue_service.update_job_status(job_id, "processing", "10")
             

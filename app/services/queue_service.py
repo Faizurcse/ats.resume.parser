@@ -169,6 +169,73 @@ class QueueService:
         except Exception as e:
             logger.error(f"❌ Failed to get queue length: {str(e)}")
             return 0
+    
+    async def cancel_job(self, job_id: str) -> bool:
+        """
+        Cancel a queued or processing job.
+        
+        Args:
+            job_id: Job identifier to cancel
+            
+        Returns:
+            bool: True if job was cancelled successfully
+        """
+        if not self.redis_client:
+            return False
+        
+        try:
+            # Check if job exists
+            job_data = self.redis_client.hgetall(f"job_status:{job_id}")
+            if not job_data:
+                return False
+            
+            # Update job status to cancelled
+            await self.update_job_status(job_id, "cancelled", error="Job cancelled by user")
+            
+            # Remove from queue if still queued (this is tricky with Redis lists)
+            # We'll mark it as cancelled and let the processor skip it
+            logger.info(f"✅ Job {job_id} cancelled successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to cancel job {job_id}: {str(e)}")
+            return False
+    
+    async def cancel_all_user_jobs(self, user_id: str = None) -> int:
+        """
+        Cancel all jobs for a specific user or all jobs.
+        
+        Args:
+            user_id: User identifier (optional, if None cancels all jobs)
+            
+        Returns:
+            int: Number of jobs cancelled
+        """
+        if not self.redis_client:
+            return 0
+        
+        try:
+            cancelled_count = 0
+            job_keys = self.redis_client.keys("job_status:*")
+            
+            for job_key in job_keys:
+                job_id = job_key.replace("job_status:", "")
+                job_data = self.redis_client.hgetall(job_key)
+                
+                if job_data and job_data.get("status") in ["queued", "processing"]:
+                    # If user_id specified, only cancel jobs for that user
+                    if user_id and job_data.get("user_id") != user_id:
+                        continue
+                    
+                    await self.update_job_status(job_id, "cancelled", error="Job cancelled by user")
+                    cancelled_count += 1
+            
+            logger.info(f"✅ Cancelled {cancelled_count} jobs")
+            return cancelled_count
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to cancel jobs: {str(e)}")
+            return 0
 
 # Global queue service instance
 queue_service = QueueService()

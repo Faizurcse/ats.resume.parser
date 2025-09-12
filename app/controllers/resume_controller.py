@@ -14,7 +14,7 @@ import shutil
 import asyncio
 from typing import Dict, Any, List
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, status, BackgroundTasks, Request
+from fastapi import APIRouter, File, UploadFile, HTTPException, status, BackgroundTasks, Request, Query
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -30,6 +30,9 @@ from app.services.openai_service import OpenAIService
 from app.services.database_service import DatabaseService
 
 from app.config.settings import settings
+
+# Global tracking for bulk processing jobs
+bulk_processing_jobs = {}
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -121,8 +124,8 @@ async def health_check():
     try:
         return HealthResponse(
             status="healthy",
-            service="resume_parser",
-            timestamp=time.time()
+            version=settings.APP_VERSION,
+            timestamp=str(time.time())
         )
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")
@@ -674,8 +677,9 @@ async def _generate_embedding_background(parsed_data: Dict[str, Any], resume_id:
             logger.error(f"❌ Embedding generation failed permanently for resume {resume_id} after {max_retries} attempts")
             return False
 
-async def _process_single_file_from_data(file_data: Dict[str, Any], file_result: Dict[str, Any], batch_data_to_save: List[Dict], results: List[Dict], successful_files: int, failed_files: int):
+async def _process_single_file_from_data(file_data: Dict[str, Any], file_result: Dict[str, Any], batch_data_to_save: List[Dict], results: List[Dict], successful_files: int, failed_files: int, duplicate_files: int):
     """Process a single file from extracted data (zip or regular file) with uniqueness check."""
+    file_start_time = time.time()  # Start timing the file processing
     try:
         # Create upload and failed folders
         os.makedirs(settings.UPLOAD_FOLDER, exist_ok=True)
@@ -687,7 +691,8 @@ async def _process_single_file_from_data(file_data: Dict[str, Any], file_result:
         if not extracted_text or not extracted_text.strip():
             file_result["error"] = "No text could be extracted from the file"
             file_result["file_type"] = file_data["extension"].lstrip('.')
-            failed_files += 1
+            file_result["processing_time"] = time.time() - file_start_time
+            failed_files[0] += 1
             return
         
         # Parse resume with AI
@@ -730,16 +735,17 @@ async def _process_single_file_from_data(file_data: Dict[str, Any], file_result:
                 json.dump(metadata, f, indent=2, ensure_ascii=False)
             
             file_result.update({
-                "status": "failed",
+                "status": "duplicate",
                 "error": uniqueness_check["error"],
                 "file_type": file_data["extension"].lstrip('.'),
+                "processing_time": time.time() - file_start_time,
                 "uniqueness_check": uniqueness_check,
                 "failed_file_path": failed_file_path,
                 "resume_id": file_uuid,
                 "failure_reason": uniqueness_check["error"],
                 "failure_type": uniqueness_check["reason"]
             })
-            failed_files += 1
+            duplicate_files[0] += 1
             logger.warning(f"Duplicate resume rejected: {file_data['filename']} - {uniqueness_check['error']}")
             return
         
@@ -752,7 +758,7 @@ async def _process_single_file_from_data(file_data: Dict[str, Any], file_result:
             f.write(file_data["content"])
         
         # Calculate processing time
-        file_processing_time = time.time() - time.time()  # Will be calculated properly
+        file_processing_time = time.time() - file_start_time
         
         # Update result for successful processing
         file_result.update({
@@ -777,14 +783,14 @@ async def _process_single_file_from_data(file_data: Dict[str, Any], file_result:
             "embedding": embedding  # Include embedding in batch data
         })
         
-        successful_files += 1
+        successful_files[0] += 1
         logger.info(f"Successfully parsed unique resume: {file_data['filename']}")
         
     except Exception as e:
         file_result.update({
             "error": f"Failed to process file: {str(e)}"
         })
-        failed_files += 1
+        failed_files[0] += 1
         logger.error(f"Error processing file {file_data['filename']}: {str(e)}")
 
 async def _process_with_queue(files: List[UploadFile], start_time: float) -> BatchResumeParseResponse:
@@ -981,7 +987,7 @@ async def get_queue_status():
 
 @router.post("/bulk-parse-resumes")
 @limiter.limit("5/minute")  # Rate limit: 5 bulk requests per minute per IP
-async def bulk_parse_resumes(request: Request, files: List[UploadFile] = File(None), failed_resume_ids: List[str] = None):
+async def bulk_parse_resumes(request: Request, files: List[UploadFile] = File(...)):
     """
     Bulk parse multiple resume files with high-scale processing support for 1000+ users.
     Supports unlimited file uploads (1000, 20000+ resumes) with async queue processing.
@@ -993,14 +999,12 @@ async def bulk_parse_resumes(request: Request, files: List[UploadFile] = File(No
     2. Upload the zip file as a single file
     3. The system will extract and process all resume files inside
     
-    RE-UPLOAD FAILED RESUMES:
-    - Use failed_resume_ids parameter to re-process specific failed resumes
-    - Get failed resume IDs from GET /api/v1/failed-resumes
-    - Mix new files with failed resume re-processing in one request
+    FOR RE-UPLOADING FAILED RESUMES:
+    - Use the separate /api/v1/re-upload-failed-resumes endpoint
+    - This endpoint only handles new file uploads
     
     Args:
         files: Multiple resume files to parse (unlimited count) OR zip files containing folders
-        failed_resume_ids: List of failed resume IDs to re-process (optional)
         
     Returns:
         Dict: Bulk processing results with job tracking
@@ -1010,25 +1014,42 @@ async def bulk_parse_resumes(request: Request, files: List[UploadFile] = File(No
     """
     start_time = time.time()
     
-    # Check if we have either files or failed resume IDs
-    if not files and not failed_resume_ids:
+    # Create a bulk processing job ID
+    bulk_job_id = str(uuid.uuid4())
+    user_id = getattr(request.client, 'host', 'unknown') if hasattr(request, 'client') else 'unknown'
+    
+    # Track the bulk processing job
+    bulk_processing_jobs[bulk_job_id] = {
+        "job_id": bulk_job_id,
+        "status": "processing",
+        "user_id": user_id,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "total_files": 0,
+        "processed_files": 0,
+        "successful_files": 0,
+        "failed_files": 0,
+        "duplicate_files": 0,
+        "progress": "0"
+    }
+    
+    # Debug logging
+    logger.info(f"Received request - files: {files}")
+    logger.info(f"Files type: {type(files)}")
+    
+    # Check if we have files
+    if not files or len(files) == 0:
+        logger.error("No files provided")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No files or failed resume IDs provided"
+            detail="No files provided"
         )
     
-    # Validate file count if files are provided
-    if files and len(files) > 50000:  # Reasonable limit for bulk processing
+    # Validate file count
+    if len(files) > 50000:  # Reasonable limit for bulk processing
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Too many files. Maximum 50,000 files per bulk request."
-        )
-    
-    # Validate failed resume IDs count if provided
-    if failed_resume_ids and len(failed_resume_ids) > 10000:  # Reasonable limit for failed resume re-processing
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Too many failed resume IDs. Maximum 10,000 failed resume IDs per request."
         )
     
     # Check if queue system is available for high-scale processing
@@ -1045,90 +1066,71 @@ async def bulk_parse_resumes(request: Request, files: List[UploadFile] = File(No
     
     # Fallback to synchronous processing for low-scale usage
     results = []
-    successful_files = 0
-    failed_files = 0
+    successful_files = [0]  # Use list to make it mutable
+    failed_files = [0]      # Use list to make it mutable
+    duplicate_files = [0]   # Use list to make it mutable
     batch_data_to_save = []
     all_files_to_process = []
     
     try:
-        # First, handle failed resume IDs if provided
-        if failed_resume_ids:
-            failed_folder = os.path.join(settings.UPLOAD_FOLDER, "failed")
-            if os.path.exists(failed_folder):
-                for resume_id in failed_resume_ids:
-                    # Find the file by resume ID
-                    found_file = None
-                    for filename in os.listdir(failed_folder):
-                        if filename.startswith(resume_id) and not filename.endswith('.metadata.json'):
-                            found_file = filename
-                            break
-                    
-                    if found_file:
-                        file_path = os.path.join(failed_folder, found_file)
-                        file_extension = os.path.splitext(found_file)[1].lower()
-                        
-                        # Read file content
-                        with open(file_path, "rb") as f:
-                            file_content = f.read()
-                        
+        # Extract files from zip files and collect all files to process
+        for file in files:
+            file_extension = os.path.splitext(file.filename)[1].lower()
+            
+            if file_extension == '.zip':
+                # Extract resume files from zip
+                try:
+                    extracted_files = await _extract_resume_files_from_zip(file)
+                    for extracted_file in extracted_files:
                         all_files_to_process.append({
-                            "filename": found_file,
-                            "content": file_content,
-                            "size": len(file_content),
-                            "extension": file_extension,
-                            "is_from_failed": True,
-                            "original_resume_id": resume_id
+                            "filename": extracted_file["filename"],
+                            "content": extracted_file["content"],
+                            "size": extracted_file["size"],
+                            "extension": extracted_file["extension"],
+                            "is_from_zip": True,
+                            "original_zip": file.filename
                         })
-                    else:
-                        logger.warning(f"Failed resume ID {resume_id} not found in failed folder")
-        
-        # Then, extract files from zip files and collect all files to process
-        if files:
-            for file in files:
-                file_extension = os.path.splitext(file.filename)[1].lower()
-                
-                if file_extension == '.zip':
-                    # Extract resume files from zip
-                    try:
-                        extracted_files = await _extract_resume_files_from_zip(file)
-                        for extracted_file in extracted_files:
-                            all_files_to_process.append({
-                                "filename": extracted_file["filename"],
-                                "content": extracted_file["content"],
-                                "size": extracted_file["size"],
-                                "extension": extracted_file["extension"],
-                                "is_from_zip": True,
-                                "original_zip": file.filename
-                            })
-                    except Exception as e:
-                        logger.error(f"Error processing zip file {file.filename}: {str(e)}")
-                        results.append({
-                            "filename": file.filename,
-                            "status": "failed",
-                            "error": f"Failed to extract zip file: {str(e)}",
-                            "parsed_data": None,
-                            "file_type": "zip",
-                            "processing_time": 0,
-                            "file_index": len(results) + 1
-                        })
-                        failed_files += 1
-                else:
-                    # Regular file
-                    file_content = await file.read()
-                    file_size = len(file_content)
-                    file_ext = os.path.splitext(file.filename)[1].lower()
-                    
-                    all_files_to_process.append({
+                except Exception as e:
+                    logger.error(f"Error processing zip file {file.filename}: {str(e)}")
+                    results.append({
                         "filename": file.filename,
-                        "content": file_content,
-                        "size": file_size,
-                        "extension": file_ext,
-                        "is_from_zip": False,
-                        "original_zip": None
+                        "status": "failed",
+                        "error": f"Failed to extract zip file: {str(e)}",
+                        "parsed_data": None,
+                        "file_type": "zip",
+                        "processing_time": 0,
+                        "file_index": len(results) + 1
                     })
+                    failed_files[0] += 1
+            else:
+                # Regular file
+                file_content = await file.read()
+                file_size = len(file_content)
+                file_ext = os.path.splitext(file.filename)[1].lower()
+                
+                all_files_to_process.append({
+                    "filename": file.filename,
+                    "content": file_content,
+                    "size": file_size,
+                    "extension": file_ext,
+                    "is_from_zip": False,
+                    "original_zip": None
+                })
+        
+        # Update job status with total files count
+        if bulk_job_id in bulk_processing_jobs:
+            bulk_processing_jobs[bulk_job_id].update({
+                "total_files": len(all_files_to_process),
+                "updated_at": time.time()
+            })
         
         # Process all collected files
         for i, file_data in enumerate(all_files_to_process):
+            # Check if job was cancelled
+            if bulk_job_id in bulk_processing_jobs and bulk_processing_jobs[bulk_job_id].get("status") == "cancelled":
+                logger.info(f"Job {bulk_job_id} was cancelled, stopping processing")
+                break
+                
             file_start_time = time.time()
             file_result = {
                 "filename": file_data["filename"],
@@ -1144,26 +1146,32 @@ async def bulk_parse_resumes(request: Request, files: List[UploadFile] = File(No
             
             try:
                 # Validate file
-                if not file_data["filename"]:
-                    file_result["error"] = "No filename provided"
-                    failed_files += 1
-                else:
-                    # Check file extension
-                    file_extension = file_data["extension"]
-                    if file_extension not in settings.ALLOWED_EXTENSIONS:
-                        file_result["error"] = f"Unsupported file format. Supported formats: {', '.join(settings.ALLOWED_EXTENSIONS)}"
-                        file_result["file_type"] = file_extension.lstrip('.')
-                        failed_files += 1
-                    else:
-                        # Check file size
-                        file_size = file_data["size"]
-                        if file_size > settings.MAX_FILE_SIZE:
-                            file_result["error"] = f"File size exceeds maximum limit of {settings.MAX_FILE_SIZE} bytes"
-                            file_result["file_type"] = file_extension.lstrip('.')
-                            failed_files += 1
+                        if not file_data["filename"]:
+                            file_result["error"] = "No filename provided"
+                            failed_files[0] += 1
                         else:
-                            # Process the file
-                            await _process_single_file_from_data(file_data, file_result, batch_data_to_save, results, successful_files, failed_files)
+                            # Check file extension
+                            file_extension = file_data["extension"]
+                            if file_extension not in settings.ALLOWED_EXTENSIONS:
+                                file_result["error"] = f"Unsupported file format. Supported formats: {', '.join(settings.ALLOWED_EXTENSIONS)}"
+                                file_result["file_type"] = file_extension.lstrip('.')
+                                failed_files[0] += 1
+                            else:
+                                # Check file size
+                                file_size = file_data["size"]
+                                if file_size > settings.MAX_FILE_SIZE:
+                                    file_result["error"] = f"File size exceeds maximum limit of {settings.MAX_FILE_SIZE} bytes"
+                                    file_result["file_type"] = file_extension.lstrip('.')
+                                    failed_files[0] += 1
+                                else:
+                                    # Check if job was cancelled before processing
+                                    if bulk_job_id in bulk_processing_jobs and bulk_processing_jobs[bulk_job_id].get("status") == "cancelled":
+                                        logger.info(f"Job {bulk_job_id} was cancelled, skipping file processing")
+                                        file_result["error"] = "Processing cancelled by user"
+                                        failed_files[0] += 1
+                                    else:
+                                        # Process the file
+                                        await _process_single_file_from_data(file_data, file_result, batch_data_to_save, results, successful_files, failed_files, duplicate_files)
             
             except Exception as e:
                 file_processing_time = time.time() - file_start_time
@@ -1171,14 +1179,27 @@ async def bulk_parse_resumes(request: Request, files: List[UploadFile] = File(No
                     "error": f"Failed to process file: {str(e)}",
                     "processing_time": file_processing_time
                 })
-                failed_files += 1
+                failed_files[0] += 1
                 logger.error(f"Error processing file {file.filename}: {str(e)}")
             
             results.append(file_result)
             
+            # Update job progress and store results incrementally
+            if bulk_job_id in bulk_processing_jobs:
+                progress_percentage = round(((i + 1) / len(all_files_to_process)) * 100, 2)
+                bulk_processing_jobs[bulk_job_id].update({
+                    "processed_files": i + 1,
+                    "successful_files": successful_files[0],
+                    "failed_files": failed_files[0],
+                    "duplicate_files": duplicate_files[0],
+                    "progress": str(progress_percentage),
+                    "updated_at": time.time(),
+                    "results": results.copy()  # Store current results incrementally
+                })
+            
             # Progress update every 100 files
             if (i + 1) % 100 == 0:
-                logger.info(f"Processed {i + 1}/{len(files)} files...")
+                logger.info(f"Processed {i + 1}/{len(all_files_to_process)} files...")
         
         # Save successful files to database in batch
         if batch_data_to_save:
@@ -1203,20 +1224,48 @@ async def bulk_parse_resumes(request: Request, files: List[UploadFile] = File(No
         
         total_processing_time = time.time() - start_time
         
+        # Update job status to completed
+        if bulk_job_id in bulk_processing_jobs:
+            bulk_processing_jobs[bulk_job_id].update({
+                "status": "completed",
+                "updated_at": time.time(),
+                "total_files": len(all_files_to_process),
+                "processed_files": len(all_files_to_process),
+                "successful_files": successful_files[0],
+                "failed_files": failed_files[0],
+                "duplicate_files": duplicate_files[0],
+                "progress": "100",
+                "total_processing_time": total_processing_time,
+                "results": results
+            })
+        
         return {
             "total_files": len(all_files_to_process),
-            "successful_files": successful_files,
-            "failed_files": failed_files,
+            "successful_files": successful_files[0],
+            "failed_files": failed_files[0],
+            "duplicate_files": duplicate_files[0],
             "total_processing_time": total_processing_time,
             "results": results,
             "processing_mode": "synchronous_bulk",
-            "success_rate": round((successful_files / len(all_files_to_process) * 100) if len(all_files_to_process) > 0 else 0, 2),
+            "success_rate": round((successful_files[0] / len(all_files_to_process) * 100) if len(all_files_to_process) > 0 else 0, 2),
+            "duplicate_rate": round((duplicate_files[0] / len(all_files_to_process) * 100) if len(all_files_to_process) > 0 else 0, 2),
             "zip_files_processed": len([f for f in files if f.filename.endswith('.zip')]),
-            "extracted_files_count": len(all_files_to_process)
+            "extracted_files_count": len(all_files_to_process),
+            "bulk_job_id": bulk_job_id
         }
         
     except Exception as e:
         logger.error(f"Error in bulk resume parsing: {str(e)}")
+        
+        # Update job status to failed
+        if bulk_job_id in bulk_processing_jobs:
+            bulk_processing_jobs[bulk_job_id].update({
+                "status": "failed",
+                "updated_at": time.time(),
+                "error": str(e),
+                "progress": "0"
+            })
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process bulk resumes: {str(e)}"
@@ -1352,6 +1401,83 @@ async def _process_bulk_with_queue(files: List[UploadFile], start_time: float) -
             detail=f"Failed to process bulk resumes with queue: {str(e)}"
         )
 
+@router.post("/cancel-job/{job_id}")
+async def cancel_job(job_id: str):
+    """
+    Cancel a specific resume processing job.
+    
+    Args:
+        job_id: Job identifier to cancel
+        
+    Returns:
+        Dict: Cancellation result
+    """
+    try:
+        from app.services.queue_service import queue_service
+        
+        if not queue_service.redis_client:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Queue system not available"
+            )
+        
+        success = await queue_service.cancel_job(job_id)
+        
+        if success:
+            return {
+                "message": "Job cancelled successfully",
+                "job_id": job_id,
+                "status": "cancelled"
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Job not found or already completed"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling job {job_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cancel job: {str(e)}"
+        )
+
+@router.post("/cancel-all-jobs")
+async def cancel_all_jobs():
+    """
+    Cancel all active resume processing jobs.
+    
+    Returns:
+        Dict: Cancellation result
+    """
+    try:
+        cancelled_count = 0
+        
+        # Cancel all jobs in the in-memory tracking
+        for job_id, job in bulk_processing_jobs.items():
+            if job.get("status") in ["processing", "queued"]:
+                job["status"] = "cancelled"
+                job["updated_at"] = time.time()
+                cancelled_count += 1
+        
+        logger.info(f"Cancelled {cancelled_count} processing jobs")
+        
+        return {
+            "message": f"Successfully cancelled {cancelled_count} processing jobs",
+            "cancelled_count": cancelled_count,
+            "total_jobs": len(bulk_processing_jobs),
+            "status": "success"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error cancelling all jobs: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cancel all jobs: {str(e)}"
+        )
+
 @router.get("/bulk-processing-status")
 async def get_all_bulk_processing_status():
     """
@@ -1366,16 +1492,73 @@ async def get_all_bulk_processing_status():
         
         # Check if Redis is available
         if not queue_service.redis_client:
+            # Use global tracking for bulk processing jobs
+            total_jobs = len(bulk_processing_jobs)
+            active_jobs = len([job for job in bulk_processing_jobs.values() if job.get("status") in ["processing", "queued"]])
+            completed_jobs = len([job for job in bulk_processing_jobs.values() if job.get("status") == "completed"])
+            failed_jobs = len([job for job in bulk_processing_jobs.values() if job.get("status") == "failed"])
+            duplicate_jobs = len([job for job in bulk_processing_jobs.values() if job.get("status") == "duplicate"])
+            
+            # Count unique users
+            unique_users = set(job.get("user_id", "unknown") for job in bulk_processing_jobs.values())
+            active_users = set(job.get("user_id", "unknown") for job in bulk_processing_jobs.values() if job.get("status") in ["processing", "queued"])
+            
+            # Calculate total file counts from all jobs
+            total_files = sum(job.get("total_files", 0) for job in bulk_processing_jobs.values())
+            successful_files = sum(job.get("successful_files", 0) for job in bulk_processing_jobs.values())
+            failed_files = sum(job.get("failed_files", 0) for job in bulk_processing_jobs.values())
+            duplicate_files = sum(job.get("duplicate_files", 0) for job in bulk_processing_jobs.values())
+            
+            # Calculate progress based on processed files
+            total_processed_files = successful_files + failed_files + duplicate_files
+            progress_percentage = round((total_processed_files / total_files * 100) if total_files > 0 else 0, 2)
+            
+            # Collect all file results from all jobs
+            all_file_results = []
+            for job in bulk_processing_jobs.values():
+                logger.info(f"Job {job.get('job_id')} status: {job.get('status')}, has results: {bool(job.get('results'))}")
+                if job.get("results"):
+                    all_file_results.extend(job.get("results", []))
+                    logger.info(f"Job {job.get('job_id')} has {len(job.get('results', []))} results")
+                # Also check for partial results in active jobs
+                elif job.get("status") == "processing" and job.get("processed_files", 0) > 0:
+                    logger.info(f"Job {job.get('job_id')} is processing, processed files: {job.get('processed_files', 0)}")
+                    # Active jobs now have incremental results
+                    if job.get("results"):
+                        all_file_results.extend(job.get("results", []))
+                        logger.info(f"Active job {job.get('job_id')} has {len(job.get('results', []))} partial results")
+            
+            logger.info(f"Total file results collected: {len(all_file_results)}")
+            
             return {
-                "status": "redis_unavailable",
-                "message": "Redis server not available. Cannot get processing status.",
-                "total_jobs": 0,
-                "active_jobs": 0,
-                "completed_jobs": 0,
-                "failed_jobs": 0,
-                "active_users": 0,
-                "total_users": 0,
-                "jobs": []
+                "status": "operational",
+                "total_jobs": total_jobs,
+                "active_jobs": active_jobs,
+                "completed_jobs": completed_jobs,
+                "failed_jobs": failed_jobs,
+                "duplicate_jobs": duplicate_jobs,
+                "total_users": len(unique_users),
+                "active_users": len(active_users),
+                "progress_percentage": progress_percentage,
+                "jobs": list(bulk_processing_jobs.values()),
+                "file_results": all_file_results,
+                "redis_status": "disconnected",
+                "debug_info": {
+                    "jobs_count": len(bulk_processing_jobs),
+                    "file_results_count": len(all_file_results),
+                    "job_statuses": [job.get("status") for job in bulk_processing_jobs.values()]
+                },
+                "summary": {
+                    "total_files": total_files,
+                    "successful_files": successful_files,
+                    "failed_files": failed_files,
+                    "duplicate_files": duplicate_files,
+                    "total_resumes_uploaded": total_jobs,
+                    "users_uploading": len(unique_users),
+                    "users_currently_active": len(active_users),
+                    "processing_progress": f"{progress_percentage}%",
+                    "estimated_completion": "All completed" if active_jobs == 0 else "Processing..."
+                }
             }
         
         # Get all job statuses from Redis
@@ -1413,6 +1596,7 @@ async def get_all_bulk_processing_status():
             active_jobs = len([j for j in all_jobs if j["status"] in ["queued", "processing"]])
             completed_jobs = len([j for j in all_jobs if j["status"] == "completed"])
             failed_jobs = len([j for j in all_jobs if j["status"] == "failed"])
+            duplicate_jobs = len([j for j in all_jobs if j["status"] == "duplicate"])
             
             # Count unique users (based on IP or user_id if available)
             unique_users = set()
@@ -1436,6 +1620,7 @@ async def get_all_bulk_processing_status():
                 "active_jobs": active_jobs,
                 "completed_jobs": completed_jobs,
                 "failed_jobs": failed_jobs,
+                "duplicate_jobs": duplicate_jobs,
                 "total_users": len(unique_users),
                 "active_users": len(active_users),
                 "progress_percentage": progress_percentage,
@@ -1459,6 +1644,7 @@ async def get_all_bulk_processing_status():
                 "active_jobs": 0,
                 "completed_jobs": 0,
                 "failed_jobs": 0,
+                "duplicate_jobs": 0,
                 "jobs": []
             }
         
@@ -1471,6 +1657,7 @@ async def get_all_bulk_processing_status():
             "active_jobs": 0,
             "completed_jobs": 0,
             "failed_jobs": 0,
+            "duplicate_jobs": 0,
             "jobs": []
         }
 
@@ -1566,6 +1753,7 @@ async def list_failed_resumes():
                 # Try to read failure reason from metadata file
                 failure_reason = "Unknown failure reason"
                 failure_type = "unknown"
+                original_filename = filename  # Default to UUID filename if no metadata
                 metadata_file = os.path.join(failed_folder, f"{resume_id}.metadata.json")
                 
                 if os.path.exists(metadata_file):
@@ -1574,12 +1762,14 @@ async def list_failed_resumes():
                             metadata = json.load(f)
                             failure_reason = metadata.get("failure_reason", "Unknown failure reason")
                             failure_type = metadata.get("failure_type", "unknown")
+                            original_filename = metadata.get("original_filename", filename)
                     except Exception as e:
                         logger.warning(f"Could not read metadata for {filename}: {e}")
                 
                 failed_files.append({
                     "resume_id": resume_id,
-                    "filename": filename,
+                    "filename": original_filename,  # Use original filename for display
+                    "uuid_filename": filename,  # Keep UUID filename for reference
                     "file_size": file_size,
                     "file_type": file_extension.lstrip('.'),
                     "created_at": os.path.getctime(file_path),
@@ -1618,6 +1808,230 @@ async def list_failed_resumes():
             detail=f"Failed to list failed resumes: {str(e)}"
         )
 
+
+@router.post("/re-upload-failed-resumes")
+async def re_upload_failed_resumes(request: Request):
+    """
+    Re-upload and re-process failed resume files using metadata (resume IDs).
+    This API works with existing files in the failed folder, not new file uploads.
+    
+    Args:
+        request: JSON body containing failed_resume_ids list
+        
+    Returns:
+        Dict: Re-processing results with job tracking
+    """
+    start_time = time.time()
+    
+    try:
+        # Parse JSON body to get failed resume IDs
+        body = await request.json()
+        failed_resume_ids = body.get("failed_resume_ids", [])
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON body. Expected: {'failed_resume_ids': ['id1', 'id2']}"
+        )
+    
+    # Create a bulk processing job ID
+    bulk_job_id = str(uuid.uuid4())
+    user_id = "reupload_user"  # Simplified for re-upload operations
+    
+    # Track the bulk processing job
+    bulk_processing_jobs[bulk_job_id] = {
+        "job_id": bulk_job_id,
+        "status": "processing",
+        "user_id": user_id,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "total_files": len(failed_resume_ids),
+        "processed_files": 0,
+        "successful_files": 0,
+        "failed_files": 0,
+        "duplicate_files": 0,
+        "progress": "0"
+    }
+    
+    logger.info(f"Re-uploading {len(failed_resume_ids)} failed resume IDs: {failed_resume_ids}")
+    
+    # Validate input
+    if not failed_resume_ids or len(failed_resume_ids) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No failed resume IDs provided"
+        )
+    
+    if len(failed_resume_ids) > 10000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Too many failed resume IDs. Maximum 10,000 failed resume IDs per request."
+        )
+    
+    # Process failed resumes
+    results = []
+    successful_files = [0]
+    failed_files = [0]
+    duplicate_files = [0]
+    batch_data_to_save = []
+    all_files_to_process = []
+    
+    try:
+        failed_folder = os.path.join(settings.UPLOAD_FOLDER, "failed")
+        logger.info(f"Failed folder path: {failed_folder}")
+        
+        if not os.path.exists(failed_folder):
+            logger.error(f"Failed folder does not exist: {failed_folder}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed resumes folder not found: {failed_folder}"
+            )
+        
+        # Process each failed resume ID
+        for resume_id in failed_resume_ids:
+            # Check if job was cancelled
+            if bulk_job_id in bulk_processing_jobs and bulk_processing_jobs[bulk_job_id].get("status") == "cancelled":
+                logger.info(f"Job {bulk_job_id} was cancelled, stopping re-upload processing")
+                break
+            # Find the file by resume ID
+            found_file = None
+            for filename in os.listdir(failed_folder):
+                if filename.startswith(resume_id) and not filename.endswith('.metadata.json'):
+                    found_file = filename
+                    break
+            
+            if found_file:
+                file_path = os.path.join(failed_folder, found_file)
+                file_extension = os.path.splitext(found_file)[1].lower()
+                
+                # Read file content
+                with open(file_path, "rb") as f:
+                    file_content = f.read()
+                
+                all_files_to_process.append({
+                    "filename": found_file,
+                    "content": file_content,
+                    "size": len(file_content),
+                    "extension": file_extension,
+                    "is_from_failed": True,
+                    "original_resume_id": resume_id
+                })
+            else:
+                logger.warning(f"Failed resume ID {resume_id} not found in failed folder")
+                results.append({
+                    "filename": resume_id,
+                    "status": "failed",
+                    "error": f"Failed resume ID {resume_id} not found",
+                    "file_type": "unknown",
+                    "processing_time": 0
+                })
+                failed_files[0] += 1
+        
+        # Process all files
+        for i, file_data in enumerate(all_files_to_process):
+            # Check if job was cancelled
+            if bulk_job_id in bulk_processing_jobs and bulk_processing_jobs[bulk_job_id].get("status") == "cancelled":
+                logger.info(f"Job {bulk_job_id} was cancelled, stopping re-upload file processing")
+                break
+            try:
+                # Parse the resume
+                parsed_data = await parse_resume_file(file_data)
+                
+                if parsed_data:
+                    # Check for uniqueness
+                    uniqueness_check = await check_resume_uniqueness(parsed_data)
+                    
+                    if uniqueness_check["is_unique"]:
+                        # Save to database
+                        resume_id = await save_resume_to_database(parsed_data, file_data)
+                        
+                        # Generate embedding
+                        await generate_resume_embedding(resume_id, parsed_data)
+                        
+                        results.append({
+                            "filename": file_data["filename"],
+                            "status": "success",
+                            "parsed_data": parsed_data,
+                            "file_type": file_data["extension"].lstrip('.'),
+                            "processing_time": time.time() - start_time,
+                            "embedding_status": "completed",
+                            "embedding_generated": True
+                        })
+                        successful_files[0] += 1
+                    else:
+                        # Mark as duplicate
+                        results.append({
+                            "filename": file_data["filename"],
+                            "status": "duplicate",
+                            "error": uniqueness_check["error"],
+                            "file_type": file_data["extension"].lstrip('.'),
+                            "processing_time": time.time() - start_time
+                        })
+                        duplicate_files[0] += 1
+                else:
+                    results.append({
+                        "filename": file_data["filename"],
+                        "status": "failed",
+                        "error": "Failed to parse resume",
+                        "file_type": file_data["extension"].lstrip('.'),
+                        "processing_time": time.time() - start_time
+                    })
+                    failed_files[0] += 1
+                
+                # Update job progress
+                if bulk_job_id in bulk_processing_jobs:
+                    progress_percentage = round(((i + 1) / len(all_files_to_process)) * 100, 2)
+                    bulk_processing_jobs[bulk_job_id].update({
+                        "processed_files": i + 1,
+                        "successful_files": successful_files[0],
+                        "failed_files": failed_files[0],
+                        "duplicate_files": duplicate_files[0],
+                        "progress": str(progress_percentage),
+                        "updated_at": time.time(),
+                        "results": results.copy()
+                    })
+                
+            except Exception as e:
+                logger.error(f"Error processing file {file_data['filename']}: {str(e)}")
+                results.append({
+                    "filename": file_data["filename"],
+                    "status": "failed",
+                    "error": str(e),
+                    "file_type": file_data["extension"].lstrip('.'),
+                    "processing_time": time.time() - start_time
+                })
+                failed_files[0] += 1
+        
+        # Mark job as completed
+        if bulk_job_id in bulk_processing_jobs:
+            bulk_processing_jobs[bulk_job_id].update({
+                "status": "completed",
+                "updated_at": time.time()
+            })
+        
+        total_processing_time = time.time() - start_time
+        
+        return {
+            "job_id": bulk_job_id,
+            "total_files": len(failed_resume_ids),
+            "successful_files": successful_files[0],
+            "failed_files": failed_files[0],
+            "duplicate_files": duplicate_files[0],
+            "total_processing_time": total_processing_time,
+            "results": results
+        }
+        
+    except Exception as e:
+        logger.error(f"Error re-uploading failed resumes: {str(e)}")
+        # Mark job as failed
+        if bulk_job_id in bulk_processing_jobs:
+            bulk_processing_jobs[bulk_job_id].update({
+                "status": "failed",
+                "updated_at": time.time()
+            })
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to re-upload failed resumes: {str(e)}"
+        )
 
 @router.delete("/failed-resumes")
 async def delete_all_failed_resumes():
@@ -1955,4 +2369,123 @@ async def delete_resume(resume_id: int):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete resume: {str(e)}"
+        )
+
+@router.delete("/resumes")
+async def delete_all_resumes():
+    """
+    Delete all resumes.
+    
+    Returns:
+        Dict: Deletion confirmation
+    """
+    try:
+        deleted_count = await database_service.delete_all_resumes()
+        
+        return {
+            "message": f"Successfully deleted {deleted_count} resumes",
+            "deleted_count": deleted_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Error deleting all resumes: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete all resumes: {str(e)}"
+        )
+
+@router.get("/resumes/{resume_id}/download")
+async def download_resume(resume_id: int):
+    """
+    Download a resume file by ID.
+    
+    Args:
+        resume_id: Resume ID to download
+        
+    Returns:
+        FileResponse: Resume file
+    """
+    try:
+        # Get resume data from database
+        resume = await database_service.get_resume_by_id(resume_id)
+        if not resume:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Resume not found"
+            )
+        
+        # Get file path
+        file_path = resume.get('file_path')
+        if not file_path or not os.path.exists(file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Resume file not found on disk"
+            )
+        
+        # Get filename for download
+        filename = resume.get('filename', 'resume.pdf')
+        
+        # Return file
+        from fastapi.responses import FileResponse
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type='application/octet-stream'
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading resume {resume_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to download resume: {str(e)}"
+        )
+
+
+@router.post("/cancel-job/{job_id}")
+async def cancel_job(job_id: str):
+    """
+    Cancel a specific processing job.
+    
+    Args:
+        job_id: Job ID to cancel
+        
+    Returns:
+        Dict: Cancellation confirmation
+    """
+    try:
+        if job_id not in bulk_processing_jobs:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Job not found"
+            )
+        
+        job = bulk_processing_jobs[job_id]
+        
+        if job.get("status") in ["completed", "failed", "cancelled"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Job is already completed, failed, or cancelled"
+            )
+        
+        # Cancel the job
+        job["status"] = "cancelled"
+        job["updated_at"] = time.time()
+        
+        logger.info(f"Cancelled job {job_id}")
+        
+        return {
+            "message": f"Successfully cancelled job {job_id}",
+            "job_id": job_id,
+            "status": "cancelled"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling job {job_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cancel job: {str(e)}"
         )
