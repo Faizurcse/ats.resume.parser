@@ -154,6 +154,7 @@ class DatabaseService:
                     candidate_phone VARCHAR(100),
                     total_experience VARCHAR(100),
                     is_unique BOOLEAN DEFAULT TRUE,
+                    company_id INTEGER,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 )
@@ -374,9 +375,10 @@ class DatabaseService:
                               file_type: str, 
                               file_size: int,
                               processing_time: float,
-                              parsed_data: Dict[str, Any]) -> int:
+                              parsed_data: Dict[str, Any],
+                              company_id: int = None) -> int:
         """
-        Save parsed resume data to database.
+        Save parsed resume data to database with company isolation.
         ALL resumes are saved without checking for duplicates.
         
         Args:
@@ -386,6 +388,7 @@ class DatabaseService:
             file_size (int): File size in bytes
             processing_time (float): Processing time in seconds
             parsed_data (Dict[str, Any]): Parsed resume data
+            company_id (int): Company ID for data isolation
             
         Returns:
             int: ID of the saved record
@@ -400,34 +403,35 @@ class DatabaseService:
             total_experience = parsed_data.get("TotalExperience", "")
             
             async with pool.acquire() as conn:
-                # ALWAYS INSERT new resume data (no duplicate checking)
+                # ALWAYS INSERT new resume data with company isolation
                 record = await conn.fetchrow('''
                     INSERT INTO resume_data 
                     (filename, file_path, file_type, file_size, processing_time, parsed_data, 
-                     candidate_name, candidate_email, candidate_phone, total_experience)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     candidate_name, candidate_email, candidate_phone, total_experience, company_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                     RETURNING id
                 ''', filename, file_path, file_type, file_size, processing_time, 
                      json.dumps(parsed_data), candidate_name, candidate_email, 
-                     candidate_phone, total_experience)
+                     candidate_phone, total_experience, company_id)
                 
                 record_id = record['id']
-                logger.info(f"New resume data saved to database with ID: {record_id}")
+                logger.info(f"New resume data saved to database with ID: {record_id} for company: {company_id}")
                 return record_id
                 
         except Exception as e:
             logger.error(f"Error saving resume data: {str(e)}")
             raise Exception(f"Failed to save resume data: {str(e)}")
     
-    async def save_batch_resume_data(self, resume_data_list: List[Dict[str, Any]]) -> List[int]:
+    async def save_batch_resume_data(self, resume_data_list: List[Dict[str, Any]], company_id: int = None) -> List[int]:
         """
-        Save multiple parsed resume data to database in batch.
+        Save multiple parsed resume data to database in batch with company isolation.
         ALL resumes are saved without checking for duplicates.
         
         Args:
             resume_data_list (List[Dict[str, Any]]): List of resume data dictionaries
                 Each dict should contain: filename, file_path, file_type, file_size, processing_time, parsed_data
-            
+            company_id (int): Company ID for data isolation
+        
         Returns:
             List[int]: List of IDs of the saved records
         """
@@ -446,21 +450,21 @@ class DatabaseService:
                         candidate_phone = resume_data['parsed_data'].get("Phone", "")
                         total_experience = resume_data['parsed_data'].get("TotalExperience", "")
                         
-                        # ALWAYS INSERT new resume data (no duplicate checking)
+                        # ALWAYS INSERT new resume data with company isolation
                         record = await conn.fetchrow('''
                             INSERT INTO resume_data 
                             (filename, file_path, file_type, file_size, processing_time, parsed_data, 
-                             candidate_name, candidate_email, candidate_phone, total_experience)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                             candidate_name, candidate_email, candidate_phone, total_experience, company_id)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                             RETURNING id
                         ''', resume_data['filename'], resume_data['file_path'], 
                              resume_data['file_type'], resume_data['file_size'], 
                              resume_data['processing_time'], json.dumps(resume_data['parsed_data']), 
-                             candidate_name, candidate_email, candidate_phone, total_experience)
+                             candidate_name, candidate_email, candidate_phone, total_experience, company_id)
                         
                         record_ids.append(record['id'])
                     
-                    logger.info(f"Batch saved {len(record_ids)} resume records to database")
+                    logger.info(f"Batch saved {len(record_ids)} resume records to database for company: {company_id}")
                     return record_ids
                 
         except Exception as e:
