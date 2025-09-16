@@ -2019,7 +2019,8 @@ def get_rating(score: float) -> str:
 @router.get("/candidates-matching/job/{job_id}/candidates-fast")
 async def get_candidates_for_job_fast(
     job_id: int, 
-    min_score: float = Query(default=0.1, description="Minimum match score threshold (default: 0.1)")
+    min_score: float = Query(default=0.1, description="Minimum match score threshold (default: 0.1)"),
+    company_id: int = Query(default=None, description="Company ID for data isolation")
 ):
     """
     Get matching candidates for a specific job using FAST PURE EMBEDDINGS approach:
@@ -2042,10 +2043,10 @@ async def get_candidates_for_job_fast(
         if not job_embedding:
             raise HTTPException(status_code=400, detail="Job has no embeddings")
         
-        # Get all resumes with embeddings
-        all_resumes = await database_service.get_all_resumes_with_embeddings(limit=1000000)
+        # Get all resumes with embeddings for the specific company
+        all_resumes = await database_service.get_all_resumes_with_embeddings(limit=1000000, company_id=company_id)
         if not all_resumes:
-            raise HTTPException(status_code=404, detail="No resumes with embeddings found")
+            raise HTTPException(status_code=404, detail="No resumes with embeddings found for this company")
         
         logger.info(f"📊 Found {len(all_resumes)} resumes with embeddings")
         

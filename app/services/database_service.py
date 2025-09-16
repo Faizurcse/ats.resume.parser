@@ -512,13 +512,14 @@ class DatabaseService:
             logger.error(f"Error getting resume {resume_id}: {str(e)}")
             raise Exception(f"Failed to get resume data: {str(e)}")
     
-    async def get_all_resumes(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    async def get_all_resumes(self, limit: int = 100, offset: int = 0, company_id: int = None) -> List[Dict[str, Any]]:
         """
-        Get all resume records with pagination.
+        Get all resume records with pagination and company isolation.
         
         Args:
             limit (int): Number of records to return
             offset (int): Number of records to skip
+            company_id (int): Company ID for data isolation
             
         Returns:
             List[Dict[str, Any]]: List of resume records
@@ -538,36 +539,46 @@ class DatabaseService:
                 ''')
                 existing_columns = {col['column_name'] for col in columns_info}
                 
-                # Build query based on available columns
+                # Build query based on available columns with company filtering
+                where_clause = ""
+                params = [limit, offset]
+                
+                if company_id is not None:
+                    where_clause = " WHERE company_id = $3"
+                    params.append(company_id)
+                
                 if 'file_path' in existing_columns and 'is_unique' in existing_columns and 'embedding' in existing_columns:
                     # Full schema - use all columns including embedding
-                    query = '''
+                    query = f'''
                         SELECT id, filename, file_path, file_type, candidate_name, candidate_email, 
-                               total_experience, parsed_data, embedding, created_at
+                               total_experience, parsed_data, embedding, created_at, company_id
                         FROM resume_data 
+                        {where_clause}
                         ORDER BY created_at DESC
                         LIMIT $1 OFFSET $2
                     '''
                 elif 'file_path' in existing_columns and 'is_unique' in existing_columns:
                     # Schema without embedding column
-                    query = '''
+                    query = f'''
                         SELECT id, filename, file_path, file_type, candidate_name, candidate_email, 
-                               total_experience, parsed_data, created_at
+                               total_experience, parsed_data, created_at, company_id
                         FROM resume_data 
+                        {where_clause}
                         ORDER BY created_at DESC
                         LIMIT $1 OFFSET $2
                     '''
                 else:
                     # Legacy schema - use only existing columns
-                    query = '''
+                    query = f'''
                         SELECT id, filename, file_type, candidate_name, candidate_email, 
-                               total_experience, parsed_data, created_at
+                               total_experience, parsed_data, created_at, company_id
                         FROM resume_data 
+                        {where_clause}
                         ORDER BY created_at DESC
                         LIMIT $1 OFFSET $2
                     '''
                 
-                records = await conn.fetch(query, limit, offset)
+                records = await conn.fetch(query, *params)
                 
                 return [
                     {
@@ -580,6 +591,7 @@ class DatabaseService:
                         "total_experience": record['total_experience'],
                         "parsed_data": record['parsed_data'],
                         "embedding": record.get('embedding'),  # Include embedding column
+                        "company_id": record.get('company_id'),  # Include company_id
                         "created_at": record['created_at'].isoformat() if record['created_at'] else None
                     }
                     for record in records
@@ -590,13 +602,14 @@ class DatabaseService:
             logger.error(f"Full error details: {e.__class__.__name__}: {str(e)}")
             raise Exception(f"Failed to get resume data: {str(e)}")
 
-    async def get_all_resumes_with_embeddings(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    async def get_all_resumes_with_embeddings(self, limit: int = 100, offset: int = 0, company_id: int = None) -> List[Dict[str, Any]]:
         """
         Get all resume records with embeddings for semantic matching.
         
         Args:
             limit (int): Number of records to return
             offset (int): Number of records to skip
+            company_id (int): Company ID for data isolation
             
         Returns:
             List[Dict[str, Any]]: List of resume records with embeddings
@@ -606,16 +619,23 @@ class DatabaseService:
             
             async with pool.acquire() as conn:
                 # Get resumes that have embeddings in the separate embedding column
-                query = '''
+                where_clause = "WHERE embedding IS NOT NULL AND embedding != 'null' AND jsonb_array_length(embedding) > 0"
+                params = [limit, offset]
+                
+                if company_id is not None:
+                    where_clause += " AND company_id = $3"
+                    params.append(company_id)
+                
+                query = f'''
                     SELECT id, filename, file_path, file_type, candidate_name, candidate_email, 
-                           total_experience, parsed_data, embedding, created_at
+                           total_experience, parsed_data, embedding, created_at, company_id
                     FROM resume_data 
-                    WHERE embedding IS NOT NULL AND embedding != 'null' AND jsonb_array_length(embedding) > 0
+                    {where_clause}
                     ORDER BY created_at DESC
                     LIMIT $1 OFFSET $2
                 '''
                 
-                records = await conn.fetch(query, limit, offset)
+                records = await conn.fetch(query, *params)
                 
                 resumes_with_embeddings = []
                 
@@ -641,6 +661,7 @@ class DatabaseService:
                             "total_experience": record['total_experience'],
                             "parsed_data": record['parsed_data'],
                             "embedding": embedding_data,
+                            "company_id": record.get('company_id'),
                             "created_at": record['created_at'].isoformat() if record['created_at'] else None
                         })
                 
@@ -742,10 +763,13 @@ class DatabaseService:
             logger.error(f"Error deleting all resumes: {str(e)}")
             raise Exception(f"Failed to delete all resume data: {str(e)}")
     
-    async def get_unique_resumes_for_download(self) -> List[Dict[str, Any]]:
+    async def get_unique_resumes_for_download(self, company_id: int = None) -> List[Dict[str, Any]]:
         """
         Get all unique resumes for download with basic information.
-        This method returns only unique resumes based on candidate email.
+        This method returns only unique resumes based on candidate email for the specified company.
+        
+        Args:
+            company_id (int): Company ID for data isolation
         
         Returns:
             List[Dict[str, Any]]: List of unique resume records
@@ -754,14 +778,24 @@ class DatabaseService:
             pool = await self._get_pool()
             
             async with pool.acquire() as conn:
-                records = await conn.fetch('''
+                # Build query with company isolation
+                where_clause = "WHERE candidate_email IS NOT NULL AND candidate_email != ''"
+                params = []
+                
+                if company_id:
+                    where_clause += " AND company_id = $1"
+                    params.append(company_id)
+                
+                query = f'''
                     SELECT DISTINCT ON (candidate_email) 
                            id, filename, file_path, file_type, candidate_name, candidate_email, 
-                           total_experience, created_at
+                           total_experience, created_at, company_id
                     FROM resume_data 
-                    WHERE candidate_email IS NOT NULL AND candidate_email != ''
+                    {where_clause}
                     ORDER BY candidate_email, created_at DESC
-                ''')
+                '''
+                
+                records = await conn.fetch(query, *params)
                 
                 return [
                     {
@@ -781,10 +815,13 @@ class DatabaseService:
             logger.error(f"Error getting unique resumes for download: {str(e)}")
             raise Exception(f"Failed to get unique resume data: {str(e)}")
     
-    async def get_unique_resumes_with_files(self) -> List[Dict[str, Any]]:
+    async def get_unique_resumes_with_files(self, company_id: int = None) -> List[Dict[str, Any]]:
         """
         Get all unique resumes with file information for download.
-        This method returns only unique resumes based on candidate email.
+        This method returns only unique resumes based on candidate email for the specified company.
+        
+        Args:
+            company_id (int): Company ID for data isolation
         
         Returns:
             List[Dict[str, Any]]: List of unique resume records with file info
@@ -793,14 +830,24 @@ class DatabaseService:
             pool = await self._get_pool()
             
             async with pool.acquire() as conn:
-                records = await conn.fetch('''
+                # Build query with company isolation
+                where_clause = "WHERE candidate_email IS NOT NULL AND candidate_email != ''"
+                params = []
+                
+                if company_id:
+                    where_clause += " AND company_id = $1"
+                    params.append(company_id)
+                
+                query = f'''
                     SELECT DISTINCT ON (candidate_email) 
                            id, filename, file_path, file_type, candidate_name, candidate_email, 
-                           total_experience, created_at
+                           total_experience, created_at, company_id
                     FROM resume_data 
-                    WHERE candidate_email IS NOT NULL AND candidate_email != ''
+                    {where_clause}
                     ORDER BY candidate_email, created_at DESC
-                ''')
+                '''
+                
+                records = await conn.fetch(query, *params)
                 
                 return [
                     {

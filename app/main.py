@@ -20,6 +20,7 @@ from app.controllers.download_resume_controller import router as download_resume
 from app.controllers.job_post_embeddings_controller import router as job_post_embeddings_router
 from app.controllers.candidates_matching_external_controller import router as candidates_matching_router
 from app.controllers.get_embedding_data_controller import router as embedding_data_router
+from app.middleware.auth_middleware import JWTAuthMiddleware
 
 
 
@@ -54,10 +55,10 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)  # Compress responses > 1K
 # Add CORS middleware - must be added before other middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=["*"],  # Allow ALL origins for testing
     allow_credentials=False,  # Must be False when using wildcard origins
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],  # Specific methods
-    allow_headers=["*"],  # Allow all headers
+    allow_headers=["*"],  # Allow all headers including Authorization
     expose_headers=["*"],  # Expose all headers
     max_age=86400  # Cache preflight response for 24 hours
 )
@@ -107,6 +108,9 @@ async def add_process_time_header(request: Request, call_next):
     process_time = time.time() - start_time
     response.headers["X-Process-Time"] = str(process_time)
     return response
+
+# Add JWT authentication middleware
+app.add_middleware(JWTAuthMiddleware)
 
 # Add request logging middleware
 @app.middleware("http")

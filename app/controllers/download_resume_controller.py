@@ -4,12 +4,13 @@ Download Resume controller for handling resume download and retrieval endpoints.
 
 import logging
 from typing import List, Dict, Any
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request
 from fastapi.responses import FileResponse
 import os
 
 from app.services.database_service import DatabaseService
 from app.config.settings import settings
+from app.middleware.auth_middleware import get_company_id
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -21,16 +22,18 @@ router = APIRouter(prefix="/api/v1/download", tags=["download-resume"])
 database_service = DatabaseService()
 
 @router.get("/resumes")
-async def get_all_resumes_for_download():
+async def get_all_resumes_for_download(request: Request):
     """
     Get only unique resumes with essential information: name, email, and upload date.
-    This endpoint returns only unique resumes based on candidate email.
+    This endpoint returns only unique resumes based on candidate email for the authenticated company.
     
     Returns:
         List[Dict]: List of unique resume records with only essential info
     """
     try:
-        resumes = await database_service.get_unique_resumes_for_download()
+        # Get company ID from JWT token
+        company_id = get_company_id(request)
+        resumes = await database_service.get_unique_resumes_for_download(company_id)
         
         # Format the response to show only essential information
         formatted_resumes = []
@@ -55,16 +58,18 @@ async def get_all_resumes_for_download():
         )
 
 @router.get("/resumes/with-files")
-async def get_unique_resumes_with_files():
+async def get_unique_resumes_with_files(request: Request):
     """
     Get all unique resumes with candidate name, email, upload date/time, and file download links.
-    This endpoint returns only unique resumes based on candidate email.
+    This endpoint returns only unique resumes based on candidate email for the authenticated company.
     
     Returns:
         List[Dict]: List of unique resume records with file download information
     """
     try:
-        resumes = await database_service.get_unique_resumes_with_files()
+        # Get company ID from JWT token
+        company_id = get_company_id(request)
+        resumes = await database_service.get_unique_resumes_with_files(company_id)
         
         # Format the response to include file download information
         formatted_resumes = []

@@ -17,6 +17,9 @@ class Settings:
     PORT: str = os.getenv("PORT", "8000")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     
+    # JWT Configuration (SAME as Node.js backend)
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "ats-super-secure-jwt-secret-2024-production-ready")
+    
     # OpenAI API Configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")

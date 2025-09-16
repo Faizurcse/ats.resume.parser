@@ -28,6 +28,7 @@ from app.models.schemas import (
 from app.services.file_processor import FileProcessor
 from app.services.openai_service import OpenAIService
 from app.services.database_service import DatabaseService
+from app.controllers._process_single_file import _process_single_file
 
 from app.config.settings import settings
 
@@ -276,7 +277,7 @@ async def get_resume_embeddings_status():
 
 @router.post("/parse-resume", response_model=BatchResumeParseResponse)
 @limiter.limit("50/minute")  # Rate limit: 50 requests per minute per IP for 1000+ users
-async def parse_resume(request: Request, file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
+async def parse_resume(request: Request, file: UploadFile = File(...), background_tasks: BackgroundTasks = None, company_id: int = Query(None, description="Company ID for data isolation")):
     """
     Parse a single resume file with high-scale processing support for 1000+ concurrent users.
     Supports single file upload (1 resume per request) with async queue processing.
@@ -294,7 +295,13 @@ async def parse_resume(request: Request, file: UploadFile = File(...), backgroun
     """
     start_time = time.time()
     
+    # Debug logging
+    logger.info(f"🔍 Resume Parse Debug - File received: {file.filename if file else 'None'}")
+    logger.info(f"🔍 Resume Parse Debug - File size: {file.size if file else 'None'}")
+    logger.info(f"🔍 Resume Parse Debug - Content type: {file.content_type if file else 'None'}")
+    
     if not file:
+        logger.error("❌ No file provided")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No file provided"
@@ -351,8 +358,8 @@ async def parse_resume(request: Request, file: UploadFile = File(...), backgroun
                         file_result["file_type"] = file_extension.lstrip('.')
                         failed_files += 1
                     else:
-                        # Process the file
-                        await _process_single_file(file, file_content, file_size, file_extension, file_result, batch_data_to_save, results, successful_files, failed_files)
+                        # Process the file with company isolation
+                        await _process_single_file(file, file_content, file_size, file_extension, file_result, batch_data_to_save, results, successful_files, failed_files, company_id)
         
         except Exception as e:
             file_processing_time = time.time() - file_start_time
@@ -368,8 +375,15 @@ async def parse_resume(request: Request, file: UploadFile = File(...), backgroun
         # Save successful files to database in batch
         if batch_data_to_save:
             try:
-                record_ids = await database_service.save_batch_resume_data(batch_data_to_save)
-                logger.info(f"Successfully saved {len(record_ids)} resume records to database")
+                # Get company_id from request query parameters
+                company_id = request.query_params.get('company_id')
+                if company_id:
+                    company_id = int(company_id)
+                else:
+                    company_id = None
+                
+                record_ids = await database_service.save_batch_resume_data(batch_data_to_save, company_id)
+                logger.info(f"Successfully saved {len(record_ids)} resume records to database for company: {company_id}")
                 
                 # Save embeddings immediately for resumes that have them
                 for i, (resume_data, db_id) in enumerate(zip(batch_data_to_save, record_ids)):
@@ -402,79 +416,6 @@ async def parse_resume(request: Request, file: UploadFile = File(...), backgroun
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process resume: {str(e)}"
         )
-
-async def _process_single_file(file, file_content, file_size, file_extension, file_result, batch_data_to_save, results, successful_files, failed_files):
-    """Process a single file synchronously."""
-    try:
-        # Save file to upload folder
-        os.makedirs(settings.UPLOAD_FOLDER, exist_ok=True)
-        
-        # Generate unique filename
-        file_uuid = str(uuid.uuid4())
-        unique_filename = f"{file_uuid}{file_extension}"
-        file_path = os.path.join(settings.UPLOAD_FOLDER, unique_filename)
-        
-        # Save file to disk
-        with open(file_path, "wb") as f:
-            f.write(file_content)
-        
-        # Process file and extract text
-        extracted_text = await file_processor.process_file(file_content, file.filename)
-        
-        if not extracted_text or not extracted_text.strip():
-            file_result["error"] = "No text could be extracted from the file"
-            file_result["file_type"] = file_extension.lstrip('.')
-            failed_files += 1
-            return
-        
-        # Parse resume with AI
-        parsed_data = await openai_service.parse_resume_text(extracted_text)
-        
-        # Generate embedding immediately after parsing
-        embedding = None
-        try:
-            embedding = await openai_service.generate_embedding(str(parsed_data))
-            if embedding:
-                logger.info(f"✅ Embedding generated immediately for resume: {file.filename}")
-            else:
-                logger.warning(f"⚠️ Failed to generate embedding for resume: {file.filename}")
-        except Exception as e:
-            logger.error(f"❌ Error generating embedding for resume {file.filename}: {str(e)}")
-        
-        # Calculate processing time
-        file_processing_time = time.time() - time.time()  # Will be calculated properly
-        
-        # Update result for successful processing
-        file_result.update({
-            "status": "success",
-            "parsed_data": parsed_data,
-            "file_type": file_extension.lstrip('.'),
-            "processing_time": file_processing_time,
-            "embedding_status": "completed" if embedding else "failed",
-            "embedding_generated": embedding is not None
-        })
-        
-        # Add to batch save data
-        batch_data_to_save.append({
-            "filename": file.filename,
-            "file_path": file_path,
-            "file_type": file_extension.lstrip('.'),
-            "file_size": file_size,
-            "processing_time": file_processing_time,
-            "parsed_data": parsed_data,
-            "resume_id": file_uuid,
-            "embedding": embedding  # Include embedding in batch data
-        })
-        
-        successful_files += 1
-        logger.info(f"Successfully parsed resume: {file.filename}")
-        
-    except Exception as e:
-        file_result.update({
-            "error": f"Failed to process file: {str(e)}"
-        })
-        failed_files += 1
-        logger.error(f"Error processing file {file.filename}: {str(e)}")
 
 async def _check_resume_uniqueness(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -1204,8 +1145,15 @@ async def bulk_parse_resumes(request: Request, files: List[UploadFile] = File(..
         # Save successful files to database in batch
         if batch_data_to_save:
             try:
-                record_ids = await database_service.save_batch_resume_data(batch_data_to_save)
-                logger.info(f"Successfully saved {len(record_ids)} resume records to database")
+                # Get company_id from request query parameters
+                company_id = request.query_params.get('company_id')
+                if company_id:
+                    company_id = int(company_id)
+                else:
+                    company_id = None
+                
+                record_ids = await database_service.save_batch_resume_data(batch_data_to_save, company_id)
+                logger.info(f"Successfully saved {len(record_ids)} resume records to database for company: {company_id}")
                 
                 # Save embeddings immediately for resumes that have them
                 for i, (resume_data, db_id) in enumerate(zip(batch_data_to_save, record_ids)):
@@ -2242,18 +2190,21 @@ async def generate_resume_embeddings():
 
 # Additional endpoints for resume management
 @router.get("/resumes")
-async def get_all_resumes():
+async def get_all_resumes(company_id: int = Query(None, description="Company ID for data isolation")):
     """
     Get unique resumes from database with embedding status only.
     Returns only unique resumes based on candidate email.
     Excludes full embedding data for better performance.
     
+    Args:
+        company_id: Company ID for data isolation (optional)
+    
     Returns:
         Dict: List of unique resume records with embedding status
     """
     try:
-        # Get all resumes first
-        all_resumes = await database_service.get_all_resumes(limit=1000, offset=0)  # Get more to filter unique
+        # Get all resumes first with company filtering
+        all_resumes = await database_service.get_all_resumes(limit=1000, offset=0, company_id=company_id)  # Get more to filter unique
         
         # Filter unique resumes by email
         unique_resumes = {}
